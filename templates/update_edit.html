@@ -1,46 +1,44 @@
 {% extends "base.html" %}
-{% block title %}Edit update{% endblock %}
+{% block title %}Edit Entry{% endblock %}
 {% block content %}
-<h1>Edit update</h1>
+<h1>Edit Entry</h1>
 
 <section class="card">
   <form method="POST" enctype="multipart/form-data">
     {{ form.hidden_tag() }}
     <label>What did you learn?</label>{{ form.body(rows=4) }}
     <label>When</label>{{ form.happened_at() }}
-
-    {% if update.photos %}
-    <label>Existing media</label>
-    <div class="upd-media">
-      {% for m in update.photos %}
-        {% if m.kind == 'photo' %}
-          <div class="media-block">
-            <img src="{{ url_for('media_view', mid=m.id) }}" alt="">
-            <form method="POST" action="{{ url_for('update_media_delete', uid=update.id, mid=m.id) }}"
-                  onsubmit="return confirm('Remove this file?');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="link-btn">remove</button>
-            </form>
-          </div>
-        {% else %}
-          <div class="media-block">
-            <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
-            <form method="POST" action="{{ url_for('update_media_delete', uid=update.id, mid=m.id) }}"
-                  onsubmit="return confirm('Remove this file?');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="link-btn">remove</button>
-            </form>
-          </div>
-        {% endif %}
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    <label>Add more photos</label>{{ form.photos(multiple=True, accept="image/*") }}
-    <label>Add another voice</label>{{ form.voice(accept="audio/*") }}
-
+    <label>Attach more photos</label>{{ form.photos(multiple=True, accept="image/*") }}
+    <label>Attach voice</label>{{ form.voice(accept="audio/*") }}
     <button class="primary big">Save Changes</button>
     <a href="{{ url_for('case_detail', cid=update.case_id) }}" class="dim">Cancel</a>
   </form>
+
+  {% if update.photos %}
+  <h2 style="margin-top:20px">Existing media</h2>
+  <div class="upd-media">
+    {% for m in update.photos %}
+      {% if m.kind == 'photo' %}
+        <div class="media-block">
+          <img src="{{ url_for('media_view', mid=m.id) }}" alt="">
+          <form method="POST" action="{{ url_for('update_media_delete', uid=update.id, mid=m.id) }}"
+                onsubmit="return confirm('Remove file?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="link-btn">remove</button>
+          </form>
+        </div>
+      {% else %}
+        <div class="media-block">
+          <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
+          <form method="POST" action="{{ url_for('update_media_delete', uid=update.id, mid=m.id) }}"
+                onsubmit="return confirm('Remove file?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="link-btn">remove</button>
+          </form>
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
 </section>
 {% endblock %}

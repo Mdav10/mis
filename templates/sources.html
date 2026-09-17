@@ -1,10 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Contacts{% endblock %}
 {% block content %}
-<h1>Contacts</h1>
-
+<h1>◆ Contacts</h1>
 <section class="card">
-  <h2>Add a contact</h2>
+  <h2>◆ Add Contact</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
     <label>Contact name</label>{{ form.handle(placeholder="S1 / neighbour / etc.") }}
@@ -12,23 +11,20 @@
     <button class="primary">Save</button>
   </form>
 </section>
-
 <section class="card">
-  <h2>Your contacts</h2>
-  {% if sources %}
-  <ul class="list">
+  <h2>◈ Contacts</h2>
+  {% if sources %}<ul class="list">
     {% for s in sources %}
     <li>
       <b>{{ s.handle }}</b>
       {% if s.description %}<div class="dim">{{ s.description }}</div>{% endif %}
       <form method="POST" action="{{ url_for('contact_delete', sid=s.id) }}"
-            onsubmit="return confirm('Delete?');">
+            onsubmit="return confirm('Delete?');" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="link-btn">delete</button>
       </form>
     </li>
     {% endfor %}
-  </ul>
-  {% else %}<p class="dim">No contacts yet.</p>{% endif %}
+  </ul>{% else %}<p class="dim">No contacts.</p>{% endif %}
 </section>
 {% endblock %}

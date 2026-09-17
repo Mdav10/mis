@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<h1>👥 Users</h1>
+
+<section class="card">
+  <h2>◆ Create User</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Username</label>{{ form.username() }}
+    <label>Password</label>{{ form.password() }}
+    <label>Display name</label>{{ form.codename() }}
+    <label>Clearance</label>{{ form.clearance() }}
+    <button class="primary">Create User</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>◆ All Users</h2>
+  <ul class="list">
+    {% for u in users %}
+    <li>
+      <b>{{ u.username }}</b>
+      {% if u.codename %}<span class="dim">— {{ u.codename }}</span>{% endif %}
+      <span class="badge">{{ u.clearance }}</span>
+      {% if u.id == current_user.id %}<span class="badge ok">you</span>{% endif %}
+      {% if u.id != current_user.id %}
+      <form method="POST" action="{{ url_for('user_delete', uid=u.id) }}"
+            onsubmit="return confirm('Remove user?');" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-btn">remove</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

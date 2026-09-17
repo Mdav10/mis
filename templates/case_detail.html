@@ -3,43 +3,51 @@
 {% block content %}
 
 <h1>{{ case.title }}</h1>
-{% if case.subject %}<p class="subtitle-line dim">About: {{ case.subject }}</p>{% endif %}
+{% if case.subject %}<p class="subtitle-line dim">Subject: {{ case.subject }}</p>{% endif %}
 
 <section class="card quick-add">
-  <h2>What did you learn?</h2>
+  <h2>◆ Log Entry for This Case</h2>
   <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="case_id" value="{{ case.id }}">
-    <textarea name="body" rows="3" placeholder="Type here..."></textarea>
+    <textarea name="body" rows="3" placeholder="Type what you learned..."></textarea>
     <label>When</label>
     <input type="datetime-local" name="happened_at" class="whenField">
     <div class="attach-row">
-      <label class="attach">📷 Add Photos
+      <label class="attach">📷 <span>Photo</span>
         <input type="file" name="photos" accept="image/*" multiple>
       </label>
-      <label class="attach">🎙 Add Voice
+      <label class="attach">🎙 <span>Voice</span>
         <input type="file" name="voice" accept="audio/*">
       </label>
     </div>
-    <button class="primary big">Save</button>
+    <button class="primary big">◆ Save Entry</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>History</h2>
+  <h2>◷ Case Timeline</h2>
   {% if case.updates %}
   <ul class="updates">
     {% for u in case.updates %}
     <li>
-      <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
+      <div class="upd-head">
+        <span class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</span>
+        <span class="dim">by {{ u.created_by }}</span>
+      </div>
       {% if u.body %}<div class="upd-body">{{ u.body }}</div>{% endif %}
       {% if u.photos %}
       <div class="upd-media">
         {% for m in u.photos %}
           {% if m.kind == 'photo' %}
-            <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy">
-          {% else %}
-            <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
+            <a href="{{ url_for('media_view', mid=m.id) }}" target="_blank">
+              <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy">
+            </a>
+          {% elif m.kind == 'voice' %}
+            <div class="voice-block">
+              <span class="dim">🎙 Voice memo</span>
+              <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
+            </div>
           {% endif %}
         {% endfor %}
       </div>
@@ -47,7 +55,7 @@
       <div class="upd-actions">
         <a href="{{ url_for('update_edit', uid=u.id) }}">edit</a>
         <form method="POST" action="{{ url_for('update_delete', uid=u.id) }}"
-              onsubmit="return confirm('Delete this update?');">
+              onsubmit="return confirm('Delete entry?');" style="display:inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="link-btn">delete</button>
         </form>
@@ -55,11 +63,11 @@
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">Nothing yet. Add your first update above.</p>{% endif %}
+  {% else %}<p class="dim">No entries yet. Log your first above.</p>{% endif %}
 </section>
 
 <section class="card">
-  <h2>People &amp; Places on this case</h2>
+  <h2>◍ People &amp; Places</h2>
   {% if case.links %}
   <ul class="list">
     {% for link in case.links %}
@@ -67,14 +75,14 @@
       <a href="{{ url_for('entity_detail', eid=link.entity.id) }}"><b>{{ link.entity.name }}</b></a>
       <span class="badge">{{ link.entity.type }}</span>
       <form method="POST" action="{{ url_for('case_entity_delete', link_id=link.id) }}"
-            onsubmit="return confirm('Remove from case?');">
+            onsubmit="return confirm('Remove from case?');" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="link-btn">remove</button>
       </form>
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">Nobody added yet.</p>{% endif %}
+  {% else %}<p class="dim">Nobody attached yet.</p>{% endif %}
 
   <form method="POST" action="{{ url_for('case_entity_add', cid=case.id) }}" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -83,40 +91,41 @@
       <option>Person</option><option>Place</option><option>Organisation</option>
       <option>Vehicle</option><option>Event</option><option>Other</option>
     </select>
-    <button class="primary">Add</button>
+    <button class="primary">Attach</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>Case settings</h2>
+  <h2>⚙ Case Settings</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
     <label>Case name</label>{{ form.title() }}
-    <label>Who/what is this about?</label>{{ form.subject() }}
+    <label>Subject</label>{{ form.subject() }}
     <label>Notes</label>{{ form.notes(rows=3) }}
     <div class="row">
       <div><label>Status</label>{{ form.status() }}</div>
       <div><label>Priority</label>{{ form.priority() }}</div>
-      <div><label>Reminder date</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}</div>
+      <div><label>Threat</label>{{ form.threat_level() }}</div>
     </div>
-    <button class="primary">Save</button>
+    <label>Reminder</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}
+    <button class="primary">Save Settings</button>
   </form>
 </section>
 
-<section class="card">
-  <h2>Export</h2>
-  <p class="dim">Download an encrypted PDF of this case. You'll be asked for a password — use the same one in Mpcipher to open it.</p>
+<section class="card highlight">
+  <h2>🔐 Encrypted Export</h2>
+  <p class="dim">Generates an AES-256-GCM sealed PDF. Use the same password in Mpcipher to open it.</p>
   <form method="POST" action="{{ url_for('case_report', cid=case.id) }}" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="password" name="password" placeholder="Password (min 6)" required minlength="6">
-    <button class="primary">Download encrypted PDF</button>
+    <button class="primary">Download Encrypted PDF</button>
   </form>
 </section>
 
 <form method="POST" action="{{ url_for('case_delete', cid=case.id) }}"
-      onsubmit="return confirm('Delete this whole case? All updates will be removed.');">
+      onsubmit="return confirm('Delete this case and all its entries?');">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <button class="danger-btn" style="width:100%">Delete case</button>
+  <button class="danger-btn" style="width:100%">⏻ Delete Case</button>
 </form>
 
 <script>

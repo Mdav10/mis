@@ -1,53 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Search{% endblock %}
 {% block content %}
-<h1>Search</h1>
-
+<h1>◇ Search</h1>
 <section class="card">
   <form method="GET" class="inline-form">
     <input name="q" value="{{ q }}" placeholder="Search everything...">
     <button class="primary">Search</button>
   </form>
 </section>
-
 {% if q %}
-  {% if results.cases %}
-  <section class="card"><h2>Cases ({{ results.cases|length }})</h2>
-    <ul class="list">
-      {% for c in results.cases %}
+  {% if results.cases %}<section class="card"><h2>◈ Cases ({{ results.cases|length }})</h2>
+    <ul class="list">{% for c in results.cases %}
       <li><a href="{{ url_for('case_detail', cid=c.id) }}"><b>{{ c.title }}</b></a></li>
-      {% endfor %}
-    </ul>
-  </section>
-  {% endif %}
-
-  {% if results.updates %}
-  <section class="card"><h2>Updates ({{ results.updates|length }})</h2>
-    <ul class="updates">
-      {% for u in results.updates %}
-      <li>
-        <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
-        <div class="upd-case dim">{{ u.case.title if u.case else '—' }}</div>
-        <div class="upd-body">{{ u.body }}</div>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
-  {% endif %}
-
-  {% if results.entities %}
-  <section class="card"><h2>People &amp; Places ({{ results.entities|length }})</h2>
-    <ul class="list">
-      {% for e in results.entities %}
+    {% endfor %}</ul></section>{% endif %}
+  {% if results.updates %}<section class="card"><h2>◷ Updates ({{ results.updates|length }})</h2>
+    <ul class="updates">{% for u in results.updates %}
+      <li><div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
+        <div class="dim">{{ u.case.title if u.case else '—' }}</div>
+        <div class="upd-body">{{ u.body }}</div></li>
+    {% endfor %}</ul></section>{% endif %}
+  {% if results.entities %}<section class="card"><h2>◍ People ({{ results.entities|length }})</h2>
+    <ul class="list">{% for e in results.entities %}
       <li><a href="{{ url_for('entity_detail', eid=e.id) }}"><b>{{ e.name }}</b></a>
         <span class="badge">{{ e.type }}</span></li>
-      {% endfor %}
-    </ul>
-  </section>
-  {% endif %}
-
+    {% endfor %}</ul></section>{% endif %}
   {% if not (results.cases or results.updates or results.entities) %}
-  <section class="card"><p class="dim">Nothing found for "{{ q }}".</p></section>
-  {% endif %}
+  <section class="card"><p class="dim">Nothing found for "{{ q }}".</p></section>{% endif %}
 {% endif %}
 {% endblock %}

@@ -2,15 +2,23 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 
+<section class="stat-strip">
+  <div class="stat"><span class="num">{{ '%03d'|format(stats.cases) }}</span><span class="lbl">Cases</span></div>
+  <div class="stat"><span class="num">{{ '%03d'|format(stats.updates) }}</span><span class="lbl">Updates</span></div>
+  <div class="stat"><span class="num">{{ '%03d'|format(stats.media) }}</span><span class="lbl">Media</span></div>
+  <div class="stat"><span class="num">{{ '%03d'|format(stats.entities) }}</span><span class="lbl">People</span></div>
+  <div class="stat"><span class="num">{{ '%03d'|format(stats.users) }}</span><span class="lbl">Users</span></div>
+</section>
+
 <section class="card quick-add">
-  <h2>What did you learn?</h2>
+  <h2>◆ Log New Intelligence</h2>
   <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data" id="quickForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <textarea name="body" id="bodyField" rows="4" placeholder="Type here..."></textarea>
+    <textarea name="body" id="bodyField" rows="4" placeholder="Type what you learned..."></textarea>
 
     <label>About</label>
     <select name="case_id" required>
-      <option value="">— choose a case —</option>
+      <option value="">— Select case —</option>
       {% for cid, title in case_choices %}
         <option value="{{ cid }}">{{ title }}</option>
       {% endfor %}
@@ -21,23 +29,23 @@
 
     <div class="attach-row">
       <label class="attach">
-        📷 Add Photos
+        📷 <span>Photo</span>
         <input type="file" name="photos" accept="image/*" multiple>
       </label>
       <label class="attach">
-        🎙 Add Voice
+        🎙 <span>Voice</span>
         <input type="file" name="voice" accept="audio/*">
       </label>
     </div>
 
-    <div id="preview"></div>
+    <div id="preview" class="preview"></div>
 
-    <button class="primary big" type="submit">Save</button>
+    <button class="primary big" type="submit">◆ Save Entry</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>Your Cases</h2>
+  <h2>◈ Active Cases</h2>
   {% if cases %}
   <ul class="list">
     {% for c in cases %}
@@ -46,29 +54,35 @@
         <b>{{ c.title }}</b>
         {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
       </a>
-      <span class="badge">{{ c.updates|length }} update{{ 's' if c.updates|length != 1 }}</span>
+      <span class="badge">{{ c.updates|length }} entries</span>
+      {% if c.threat_level in ['HIGH','CRITICAL'] %}
+      <span class="badge warn">{{ c.threat_level }}</span>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No cases yet. <a href="{{ url_for('cases') }}">Create one →</a></p>
+  <p class="dim">No cases yet. <a href="{{ url_for('cases') }}">Open one →</a></p>
   {% endif %}
 </section>
 
 {% if recent %}
 <section class="card">
-  <h2>Recent Updates</h2>
+  <h2>◷ Recent Activity Feed</h2>
   <ul class="updates">
     {% for u in recent %}
     <li>
-      <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
-      <div class="upd-case dim">{{ u.case.title if u.case else '—' }}</div>
+      <div class="upd-head">
+        <span class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</span>
+        <span class="upd-case dim">{{ u.case.title if u.case else '—' }}</span>
+      </div>
       {% if u.body %}<div class="upd-body">{{ u.body }}</div>{% endif %}
       {% if u.photos %}
       <div class="upd-media">
         {% for m in u.photos %}
           {% if m.kind == 'photo' %}
-            <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy">
+            <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy"
+                 onclick="window.open(this.src,'_blank')">
           {% else %}
             <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
           {% endif %}
@@ -78,7 +92,7 @@
       <div class="upd-actions">
         <a href="{{ url_for('update_edit', uid=u.id) }}">edit</a>
         <form method="POST" action="{{ url_for('update_delete', uid=u.id) }}"
-              onsubmit="return confirm('Delete this update?');">
+              onsubmit="return confirm('Delete entry?');" style="display:inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="link-btn">delete</button>
         </form>
@@ -90,23 +104,20 @@
 {% endif %}
 
 <script>
-// default "when" to now
 (function(){
   const el = document.getElementById('whenField');
-  if (!el) return;
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  el.value = now.toISOString().slice(0,16);
-})();
-
-// preview attached media before upload
-(function(){
+  if (el) {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    el.value = now.toISOString().slice(0,16);
+  }
   const photosInput = document.querySelector('input[name="photos"]');
   const voiceInput = document.querySelector('input[name="voice"]');
   const prev = document.getElementById('preview');
   function render() {
+    if (!prev) return;
     prev.innerHTML = '';
-    if (photosInput.files) {
+    if (photosInput && photosInput.files) {
       [...photosInput.files].forEach(f => {
         const url = URL.createObjectURL(f);
         const img = document.createElement('img');
@@ -114,7 +125,7 @@
         prev.appendChild(img);
       });
     }
-    if (voiceInput.files && voiceInput.files[0]) {
+    if (voiceInput && voiceInput.files && voiceInput.files[0]) {
       const url = URL.createObjectURL(voiceInput.files[0]);
       const a = document.createElement('audio');
       a.controls = true; a.src = url; a.preload = 'none';

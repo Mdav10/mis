@@ -1,38 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Cases{% endblock %}
 {% block content %}
-<h1>Cases</h1>
-
+<h1>◈ Cases</h1>
 <section class="card">
-  <h2>New Case</h2>
+  <h2>◆ Open New Case</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
     <label>Case name</label>{{ form.title(placeholder="e.g. John Doe") }}
-    <label>Who/what is this about?</label>{{ form.subject(placeholder="Optional") }}
+    <label>Subject</label>{{ form.subject(placeholder="Optional") }}
     <label>Notes</label>{{ form.notes(rows=3) }}
     <div class="row">
       <div><label>Status</label>{{ form.status() }}</div>
       <div><label>Priority</label>{{ form.priority() }}</div>
-      <div><label>Reminder date</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}</div>
+      <div><label>Threat</label>{{ form.threat_level() }}</div>
     </div>
-    <button class="primary big">Create Case</button>
+    <label>Reminder</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}
+    <button class="primary big">◆ Open Case</button>
   </form>
 </section>
-
 <section class="card">
-  <h2>All Cases</h2>
-  {% if cases %}
-  <ul class="list">
+  <h2>◈ All Cases</h2>
+  {% if cases %}<ul class="list">
     {% for c in cases %}
     <li>
       <a href="{{ url_for('case_detail', cid=c.id) }}" class="case-link">
         <b>{{ c.title }}</b>
         {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
       </a>
-      <span class="badge">{{ c.updates|length }} update{{ 's' if c.updates|length != 1 }}</span>
+      <span class="badge">{{ c.updates|length }} entries</span>
     </li>
     {% endfor %}
-  </ul>
-  {% else %}<p class="dim">No cases yet.</p>{% endif %}
+  </ul>{% else %}<p class="dim">No cases yet.</p>{% endif %}
 </section>
 {% endblock %}

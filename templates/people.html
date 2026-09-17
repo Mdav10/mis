@@ -1,10 +1,9 @@
 {% extends "base.html" %}
 {% block title %}People & Places{% endblock %}
 {% block content %}
-<h1>People &amp; Places</h1>
-
+<h1>◍ People &amp; Places</h1>
 <section class="card">
-  <h2>Add</h2>
+  <h2>◆ Add</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
     <label>Name</label>{{ form.name() }}
@@ -14,23 +13,20 @@
     <button class="primary">Save</button>
   </form>
 </section>
-
 <section class="card">
-  <h2>All</h2>
-  {% if people %}
-  <ul class="list">
+  <h2>◍ All</h2>
+  {% if people %}<ul class="list">
     {% for p in people %}
     <li>
       <a href="{{ url_for('entity_detail', eid=p.id) }}"><b>{{ p.name }}</b></a>
       <span class="badge">{{ p.type }}</span>
       <form method="POST" action="{{ url_for('entity_delete', eid=p.id) }}"
-            onsubmit="return confirm('Delete?');">
+            onsubmit="return confirm('Delete?');" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="link-btn">delete</button>
       </form>
     </li>
     {% endfor %}
-  </ul>
-  {% else %}<p class="dim">Nobody added yet.</p>{% endif %}
+  </ul>{% else %}<p class="dim">Nobody added yet.</p>{% endif %}
 </section>
 {% endblock %}

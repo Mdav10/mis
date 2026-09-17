@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0a08">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MIS">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+<link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <title>{% block title %}MIS{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 {% block head %}{% endblock %}
@@ -11,21 +17,38 @@
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
 
 {% if current_user.is_authenticated %}
+{% set active = request.endpoint %}
+<div class="classified-banner">◆ CLASSIFIED // MIS OPERATIONAL // EYES ONLY ◆</div>
 <header class="topbar">
-  <div class="brand"><a href="{{ url_for('dashboard') }}">MIS</a></div>
-  <nav>
-    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' }}">Home</a>
-    <a href="{{ url_for('cases') }}" class="{{ 'active' if request.endpoint in ['cases','case_detail'] }}">Cases</a>
-    <a href="{{ url_for('entities') }}" class="{{ 'active' if request.endpoint in ['entities','entity_detail'] }}">People &amp; Places</a>
-    <a href="{{ url_for('relationships') }}" class="{{ 'active' if request.endpoint=='relationships' }}">Connections</a>
-    <a href="{{ url_for('contacts') }}" class="{{ 'active' if request.endpoint=='contacts' }}">Contacts</a>
-    <a href="{{ url_for('search') }}" class="{{ 'active' if request.endpoint=='search' }}">Search</a>
-    <a href="{{ url_for('briefing') }}" class="{{ 'active' if request.endpoint=='briefing' }}">Briefing</a>
-    <a href="{{ url_for('drops') }}" class="{{ 'active' if request.endpoint=='drops' }}">Timed Notes</a>
-    <a href="{{ url_for('activity') }}" class="{{ 'active' if request.endpoint=='activity' }}">Activity</a>
-    <a href="{{ url_for('users') }}" class="{{ 'active' if request.endpoint=='users' }}">Users</a>
-    <a href="{{ url_for('logout') }}" class="logout">Log out</a>
+  <div class="brand"><a href="{{ url_for('dashboard') }}">MIS</a>
+    <span class="dim">◈</span>
+    <span class="agent-name">{{ current_user.codename or current_user.username|upper }}</span>
+  </div>
+  <nav class="desktop-nav">
+    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">Home</a>
+    <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">Cases</a>
+    <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}">People</a>
+    <a href="{{ url_for('relationships') }}" class="{{ 'active' if active=='relationships' }}">Links</a>
+    <a href="{{ url_for('contacts') }}" class="{{ 'active' if active=='contacts' }}">Contacts</a>
+    <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">Search</a>
+    <a href="{{ url_for('briefing') }}" class="{{ 'active' if active=='briefing' }}">Briefing</a>
+    <a href="{{ url_for('drops') }}" class="{{ 'active' if active=='drops' }}">Locked</a>
+    <a href="{{ url_for('activity') }}" class="{{ 'active' if active=='activity' }}">Log</a>
+    <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">Users</a>
   </nav>
+  <div class="user-menu">
+    <button type="button" class="menu-btn" onclick="toggleMenu()" aria-label="Menu">☰</button>
+    <div class="menu-dropdown" id="userMenu">
+      <div class="menu-header">
+        <div class="dim">Signed in as</div>
+        <b>{{ current_user.username }}</b>
+        <div class="dim">{{ current_user.clearance }}</div>
+      </div>
+      <a href="{{ url_for('change_password') }}">🔑 Change Password</a>
+      <a href="{{ url_for('users') }}">👥 Manage Users</a>
+      <a href="{{ url_for('logout') }}" class="logout-link">⏻ Log Out</a>
+    </div>
+  </div>
 </header>
 {% endif %}
 
@@ -40,12 +63,76 @@
 
 {% if current_user.is_authenticated %}
 <nav class="mobilenav">
-  <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' }}"><span class="ico">🏠</span>Home</a>
-  <a href="{{ url_for('cases') }}" class="{{ 'active' if request.endpoint in ['cases','case_detail'] }}"><span class="ico">📁</span>Cases</a>
-  <a href="{{ url_for('entities') }}" class="{{ 'active' if request.endpoint in ['entities','entity_detail'] }}"><span class="ico">👤</span>People</a>
-  <a href="{{ url_for('search') }}" class="{{ 'active' if request.endpoint=='search' }}"><span class="ico">🔎</span>Search</a>
-  <a href="{{ url_for('activity') }}" class="{{ 'active' if request.endpoint=='activity' }}"><span class="ico">📋</span>Log</a>
+  <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}"><span class="ico">◉</span>Home</a>
+  <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}"><span class="ico">◈</span>Cases</a>
+  <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}"><span class="ico">◍</span>People</a>
+  <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}"><span class="ico">◇</span>Search</a>
+  <a href="{{ url_for('activity') }}" class="{{ 'active' if active=='activity' }}"><span class="ico">▤</span>Log</a>
 </nav>
 {% endif %}
+
+<div id="cmdPalette" class="cmd-palette" style="display:none">
+  <input type="text" id="cmdInput" placeholder="Type a command… (cases, people, logout, password)">
+  <ul id="cmdResults"></ul>
+</div>
+
+<script>
+function toggleMenu() {
+  const m = document.getElementById('userMenu');
+  m.classList.toggle('open');
+}
+document.addEventListener('click', function(e){
+  const menu = document.getElementById('userMenu');
+  const btn = document.querySelector('.menu-btn');
+  if (!menu || !btn) return;
+  if (!menu.contains(e.target) && !btn.contains(e.target)) menu.classList.remove('open');
+});
+// Keyboard command palette (desktop)
+document.addEventListener('keydown', function(e){
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+    e.preventDefault();
+    const p = document.getElementById('cmdPalette');
+    p.style.display = 'block';
+    document.getElementById('cmdInput').focus();
+    runCmd('');
+  }
+  if (e.key === 'Escape') {
+    const p = document.getElementById('cmdPalette');
+    if (p) p.style.display = 'none';
+  }
+});
+const CMDS = [
+  {label: 'Home', url: '{{ url_for("dashboard") }}'},
+  {label: 'Cases', url: '{{ url_for("cases") }}'},
+  {label: 'People & Places', url: '{{ url_for("entities") }}'},
+  {label: 'Connections', url: '{{ url_for("relationships") }}'},
+  {label: 'Contacts', url: '{{ url_for("contacts") }}'},
+  {label: 'Search', url: '{{ url_for("search") }}'},
+  {label: 'Briefing', url: '{{ url_for("briefing") }}'},
+  {label: 'Time-Locked Notes', url: '{{ url_for("drops") }}'},
+  {label: 'Activity Log', url: '{{ url_for("activity") }}'},
+  {label: 'Users', url: '{{ url_for("users") }}'},
+  {label: 'Change Password', url: '{{ url_for("change_password") }}'},
+  {label: 'Log Out', url: '{{ url_for("logout") }}'},
+];
+function runCmd(q) {
+  const res = document.getElementById('cmdResults');
+  const query = q.toLowerCase();
+  res.innerHTML = '';
+  CMDS.filter(c => c.label.toLowerCase().includes(query)).forEach(c => {
+    const li = document.createElement('li');
+    li.textContent = c.label;
+    li.onclick = () => location.href = c.url;
+    res.appendChild(li);
+  });
+}
+const ci = document.getElementById('cmdInput');
+if (ci) ci.addEventListener('input', e => runCmd(e.target.value));
+
+// Register service worker for PWA
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
+}
+</script>
 </body>
 </html>

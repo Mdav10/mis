@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Briefing{% endblock %}
 {% block content %}
-<h1>Briefing</h1>
-
+<h1>▣ Briefing</h1>
 <section class="card">
   <div class="tabs">
     <a class="badge {{ 'ok' if days==1 }}" href="{{ url_for('briefing', days=1) }}">Last 24h</a>
@@ -11,9 +10,8 @@
   </div>
   <p class="dim">Since {{ since.strftime('%d %b %Y · %H:%M') }}</p>
 </section>
-
-<section class="card">
-  <h2>Download encrypted briefing</h2>
+<section class="card highlight">
+  <h2>🔐 Download Encrypted Briefing</h2>
   <form method="POST" action="{{ url_for('briefing_pdf') }}" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="days" value="{{ days }}">
@@ -21,30 +19,24 @@
     <button class="primary">Download</button>
   </form>
 </section>
-
 <section class="card">
-  <h2>Updates ({{ updates|length }})</h2>
-  {% if updates %}
-  <ul class="updates">
+  <h2>◷ Updates ({{ updates|length }})</h2>
+  {% if updates %}<ul class="updates">
     {% for u in updates %}
     <li>
-      <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
-      <div class="upd-case dim">{{ u.case.title if u.case else '—' }}</div>
-      {% if u.body %}<div class="upd-body">{{ u.body }}</div>{% endif %}
-      {% if u.photos %}
-      <div class="upd-media">
-        {% for m in u.photos %}
-          {% if m.kind == 'photo' %}
-            <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy">
-          {% else %}
-            <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
-          {% endif %}
-        {% endfor %}
+      <div class="upd-head">
+        <span class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</span>
+        <span class="dim">{{ u.case.title if u.case else '—' }}</span>
       </div>
-      {% endif %}
+      {% if u.body %}<div class="upd-body">{{ u.body }}</div>{% endif %}
+      {% if u.photos %}<div class="upd-media">
+        {% for m in u.photos %}
+          {% if m.kind == 'photo' %}<img src="{{ url_for('media_view', mid=m.id) }}" alt="">
+          {% else %}<audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>{% endif %}
+        {% endfor %}
+      </div>{% endif %}
     </li>
     {% endfor %}
-  </ul>
-  {% else %}<p class="dim">Nothing in this window.</p>{% endif %}
+  </ul>{% else %}<p class="dim">Nothing in this window.</p>{% endif %}
 </section>
 {% endblock %}

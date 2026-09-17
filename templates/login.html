@@ -1,17 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Log in{% endblock %}
+{% block title %}Authentication{% endblock %}
 {% block content %}
 <div class="login-wrap">
   <div class="login-card">
     <h1>MIS</h1>
     <p class="subtitle">Mugisha's Intelligence System</p>
-    <form method="POST" novalidate autocomplete="off">
+    <p class="clearance-warning">◆ ACCESS RESTRICTED ◆</p>
+    <form method="POST" novalidate autocomplete="off" id="loginForm">
       {{ form.hidden_tag() }}
-      {{ form.username(placeholder="Username", autocomplete="username",
+      {{ form.username(placeholder="USERNAME", autocomplete="username",
                        autocapitalize="none", autocorrect="off", spellcheck="false") }}
-      {{ form.password(placeholder="Password", autocomplete="current-password") }}
-      {{ form.submit(class_="primary") }}
+      {{ form.password(placeholder="PASSPHRASE", autocomplete="current-password") }}
+      {{ form.submit(class_="primary", id="loginBtn") }}
     </form>
+    <div id="bootScreen" class="boot-screen" style="display:none"></div>
   </div>
 </div>
+<script>
+(function(){
+  const form = document.getElementById('loginForm');
+  const boot = document.getElementById('bootScreen');
+  const btn = document.getElementById('loginBtn');
+  if (!form) return;
+  form.addEventListener('submit', function(e){
+    if (btn.disabled) { e.preventDefault(); return; }
+    btn.disabled = true;
+    const lines = [
+      '> AUTHENTICATING ...',
+      '> VERIFYING CLEARANCE ...',
+      '> SESSION ESTABLISHED',
+      '> DECRYPTING CASE FILES ...',
+      '> ACCESS GRANTED'
+    ];
+    boot.style.display = 'block';
+    boot.textContent = '';
+    let i = 0;
+    const iv = setInterval(() => {
+      if (i >= lines.length) { clearInterval(iv); return; }
+      boot.textContent += lines[i] + '\n';
+      i++;
+    }, 180);
+  });
+})();
+</script>
 {% endblock %}

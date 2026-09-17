@@ -5,15 +5,12 @@
 <p><span class="badge">{{ entity.type }}</span>
    {% if entity.region %}<span class="dim">— {{ entity.region }}</span>{% endif %}</p>
 {% if entity.notes %}<p>{{ entity.notes }}</p>{% endif %}
-
 <section class="card">
-  <h2>Appears on these cases</h2>
-  {% if cases %}
-  <ul class="list">
+  <h2>◈ Appears on</h2>
+  {% if cases %}<ul class="list">
     {% for link in cases %}
     <li><a href="{{ url_for('case_detail', cid=link.case.id) }}">{{ link.case.title }}</a></li>
     {% endfor %}
-  </ul>
-  {% else %}<p class="dim">Not on any case yet.</p>{% endif %}
+  </ul>{% else %}<p class="dim">Not on any case yet.</p>{% endif %}
 </section>
 {% endblock %}

@@ -1,23 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Timed Notes{% endblock %}
+{% block title %}Locked Notes{% endblock %}
 {% block content %}
-<h1>Time-Locked Notes</h1>
-
+<h1>✉ Time-Locked Notes</h1>
 <section class="card">
-  <h2>Lock a message</h2>
+  <h2>◆ Seal a Message</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
     <label>Title</label>{{ form.title() }}
     <label>Message</label>{{ form.body(rows=4) }}
     <label>Open on (YYYY-MM-DD HH:MM)</label>{{ form.unlock_at() }}
-    <button class="primary">Lock it</button>
+    <button class="primary">Seal</button>
   </form>
 </section>
-
 <section class="card">
-  <h2>Locked messages</h2>
-  {% if drops %}
-  <ul class="updates">
+  <h2>✉ Sealed Messages</h2>
+  {% if drops %}<ul class="updates">
     {% for d in drops %}
     <li>
       <div><b>{{ d.title }}</b>
@@ -25,19 +22,15 @@
         {% else %}<span class="badge warn">{{ d.countdown }}</span>{% endif %}
       </div>
       <div class="dim">Opens {{ d.unlock_at.strftime('%d %b %Y · %H:%M') }}</div>
-      {% if d.is_unlocked %}
-      <div class="upd-body">{{ d.body }}</div>
-      {% else %}
-      <div class="locked-box">Locked until {{ d.unlock_at.strftime('%d %b %Y · %H:%M') }}</div>
-      {% endif %}
+      {% if d.is_unlocked %}<div class="upd-body">{{ d.body }}</div>
+      {% else %}<div class="locked-box">▓ Sealed until {{ d.unlock_at.strftime('%d %b %Y · %H:%M') }} ▓</div>{% endif %}
       <form method="POST" action="{{ url_for('drop_delete', did=d.id) }}"
-            onsubmit="return confirm('Delete?');">
+            onsubmit="return confirm('Delete?');" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="link-btn">delete</button>
       </form>
     </li>
     {% endfor %}
-  </ul>
-  {% else %}<p class="dim">No locked messages.</p>{% endif %}
+  </ul>{% else %}<p class="dim">No sealed messages.</p>{% endif %}
 </section>
 {% endblock %}
