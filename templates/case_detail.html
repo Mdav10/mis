@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Case #{{case.id}}{% endblock %}
+{% block content %}
+<h1>📁 Case #{{case.id}} — {{case.title}}</h1>
+
+<section class="card">
+  <h2>Edit Case</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Title</label>{{ form.title() }}
+    <label>Objective</label>{{ form.objective(rows=3) }}
+    <label>Status</label>{{ form.status() }}
+    <button class="primary">Save</button>
+  </form>
+</section>
+
+<section class="card highlight">
+  <h2>🔐 Encrypted Report (Mpcipher-compatible)</h2>
+  <p class="dim">Enter a password. The PDF is AES-256-GCM encrypted with PBKDF2-SHA256 (200,000 iters). Use the <b>same password</b> in Mpcipher Tool to decrypt.</p>
+  <form method="POST" action="{{ url_for('case_report', cid=case.id) }}" class="inline">
+    {{ report_form.hidden_tag() }}
+    {{ report_form.password(placeholder="Encryption password") }}
+    {{ report_form.submit(class_="primary") }}
+  </form>
+  <p class="dim">File format: <code>MIS1 | salt(16) | nonce(12) | ciphertext+GCM tag</code></p>
+</section>
+
+<section class="card">
+  <h2>📝 Notes ({{case.notes|length}})</h2>
+  {% if case.notes %}<ul class="list">
+    {% for n in case.notes %}<li><b>{{n.title}}</b> — <span class="dim">{{n.body[:120]}}</span></li>{% endfor %}
+  </ul>{% else %}<p class="dim">No notes.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>📄 Evidence ({{case.evidence|length}})</h2>
+  {% if case.evidence %}<ul class="list">
+    {% for e in case.evidence %}
+    <li><b>{{e.title}}</b> — <code>{{e.sha256[:24]}}…</code> {% if e.verified %}✅{% else %}☐{% endif %}</li>
+    {% endfor %}
+  </ul>{% else %}<p class="dim">No evidence.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Notes{% endblock %}
+{% block content %}
+<h1>📝 Intelligence Notes</h1>
+<section class="card">
+  <h2>New Note</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Title</label>{{ form.title() }}
+    <label>Body</label>{{ form.body(rows=3) }}
+    <label>Source</label>{{ form.source() }}
+    <div class="row">
+      <div><label>Source Reliability</label>{{ form.reliability() }}</div>
+      <div><label>Information Confidence</label>{{ form.confidence() }}</div>
+      <div><label>Related Case</label>{{ form.case_id() }}</div>
+    </div>
+    <button class="primary">Save Note</button>
+  </form>
+</section>
+<section class="card">
+  <h2>All Notes</h2>
+  {% if notes %}<ul class="list">
+    {% for n in notes %}
+    <li>
+      <b>{{n.title}}</b><br>
+      <span class="dim">{{n.body[:200]}}{% if n.body|length > 200 %}…{% endif %}</span><br>
+      <small class="dim">Source: {{n.source or '—'}} | Rel: {{n.reliability}} | Conf: {{n.confidence}}
+        {% if n.case %} | Case #{{n.case.id}}{% endif %}</small>
+      <form method="POST" action="{{ url_for('note_delete', nid=n.id) }}" class="inline-del"
+            onsubmit="return confirm('Delete note?');"><button class="danger-btn">✕</button></form>
+    </li>
+    {% endfor %}
+  </ul>{% else %}<p class="dim">No notes.</p>{% endif %}
+</section>
+{% endblock %}

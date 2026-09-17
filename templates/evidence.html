@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Evidence{% endblock %}
+{% block content %}
+<h1>📄 Evidence Locker</h1>
+<section class="card">
+  <h2>Upload Evidence</h2>
+  <p class="dim">Files are stored inside PostgreSQL and survive Render restarts.</p>
+  <form method="POST" enctype="multipart/form-data">
+    {{ form.hidden_tag() }}
+    <label>Title</label>{{ form.title() }}
+    <label>File</label>{{ form.file() }}
+    <label>Related Case</label>{{ form.case_id() }}
+    <button class="primary">Upload & Hash (SHA-256)</button>
+  </form>
+</section>
+<section class="card">
+  <h2>All Evidence</h2>
+  {% if evidence %}<ul class="list">
+    {% for e in evidence %}
+    <li>
+      <b>{{e.title}}</b> — <code>{{e.sha256[:32]}}…</code>
+      {% if e.verified %}<span class="badge ok">Verified</span>{% else %}
+        <form method="POST" action="{{ url_for('evidence_verify', eid=e.id) }}" class="inline">
+          <button class="small">Verify</button></form>
+      {% endif %}
+      <a href="{{ url_for('evidence_download', eid=e.id) }}" class="small">Download</a>
+    </li>
+    {% endfor %}
+  </ul>{% else %}<p class="dim">No evidence.</p>{% endif %}
+</section>
+{% endblock %}

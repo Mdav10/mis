@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}MIS{% endblock %} · Mugisha's Intelligence System</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% if current_user.is_authenticated %}
+<header class="topbar">
+  <div class="brand"><strong>MIS</strong> <span class="dim">Intelligence System</span></div>
+  <nav>
+    <a href="{{ url_for('dashboard') }}">Home</a>
+    <a href="{{ url_for('cases') }}">Cases</a>
+    <a href="{{ url_for('people') }}">People</a>
+    <a href="{{ url_for('notes') }}">Notes</a>
+    <a href="{{ url_for('evidence') }}">Evidence</a>
+    <a href="{{ url_for('search') }}">Search</a>
+    <a href="{{ url_for('audit_log') }}">Audit</a>
+    <a href="{{ url_for('change_password') }}">🔑</a>
+    <a href="{{ url_for('logout') }}" class="danger">Logout</a>
+  </nav>
+</header>
+{% endif %}
+<main class="container">
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% if msgs %}<div class="flashes">
+      {% for cat,m in msgs %}<div class="flash {{cat}}">{{m}}</div>{% endfor %}
+    </div>{% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="footer"><span class="dim">Collect → Verify → Connect → Analyze → Protect → Act</span></footer>
+</body>
+</html>

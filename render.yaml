@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: mis
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: INITIAL_USERNAME
+        value: Mpc
+      - key: INITIAL_PASSWORD
+        sync: false

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}People{% endblock %}
+{% block content %}
+<h1>👤 People & Entities</h1>
+<section class="card">
+  <h2>Add Entity</h2>
+  <form method="POST" class="inline">
+    {{ form.hidden_tag() }}
+    {{ form.name(placeholder="Name") }}
+    {{ form.type() }}
+    {{ form.notes(placeholder="Notes", rows=1) }}
+    <label class="check">{{ form.verified() }} Verified</label>
+    {{ form.submit(class_="primary") }}
+  </form>
+</section>
+<section class="card">
+  <h2>All Entities</h2>
+  {% if people %}<ul class="list">
+    {% for p in people %}
+    <li>
+      <b>{{p.name}}</b> <span class="badge">{{p.type}}</span>
+      {% if p.verified %}<span class="badge ok">Verified</span>{% else %}<span class="badge warn">Unverified</span>{% endif %}
+      <form method="POST" action="{{ url_for('person_delete', pid=p.id) }}" class="inline-del"
+            onsubmit="return confirm('Delete?');"><button class="danger-btn">✕</button></form>
+    </li>
+    {% endfor %}
+  </ul>{% else %}<p class="dim">No entities.</p>{% endif %}
+</section>
+{% endblock %}

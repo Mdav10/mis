@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+<h1>🕒 Audit Log</h1>
+<section class="card">
+  {% if entries %}<ul class="timeline">
+    {% for a in entries %}
+    <li><span class="dim">{{a.created_at.strftime('%Y-%m-%d %H:%M:%S')}}</span> — <b>{{a.action}}</b> {{a.detail}} <span class="dim">({{a.actor}})</span></li>
+    {% endfor %}
+  </ul>{% else %}<p class="dim">No entries.</p>{% endif %}
+</section>
+{% endblock %}
