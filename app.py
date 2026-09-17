@@ -1,6 +1,7 @@
 # ============================================================
 # MIS — Mugisha's Intelligence System
-# Single-file Flask app: models + forms + routes + PDF crypto
+# Single-file Flask app
+# Isolated to Postgres schema "mis" + mis_* table prefix
 # ============================================================
 
 import os
@@ -28,6 +29,7 @@ from wtforms.validators import DataRequired, Length, EqualTo, Optional
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+from sqlalchemy import text, inspect
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -48,26 +50,42 @@ load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
+MIS_SCHEMA = "mis"
+
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
-    _db = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
+
+    _db = os.getenv(
+        "DATABASE_URL",
+        f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}"
+    )
     if _db.startswith("postgres://"):
         _db = _db.replace("postgres://", "postgresql://", 1)
+
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
+
+    _engine_opts = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
     }
+    # Force MIS to live in its own Postgres schema
+    if _db.startswith("postgresql"):
+        _engine_opts["connect_args"] = {
+            "options": f"-c search_path={MIS_SCHEMA},public"
+        }
+    SQLALCHEMY_ENGINE_OPTIONS = _engine_opts
+
     WTF_CSRF_TIME_LIMIT = None
     MAX_CONTENT_LENGTH = 40 * 1024 * 1024
+
     INITIAL_USERNAME = os.getenv("INITIAL_USERNAME", "Mpc")
     INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "08800Mpc!")
 
 
 # ============================================================
-# EXTENSIONS
+# APP + EXTENSIONS
 # ============================================================
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -80,10 +98,10 @@ login_manager.login_message = "Please log in."
 
 
 # ============================================================
-# MODELS
+# MODELS  (all tables prefixed mis_)
 # ============================================================
 class User(UserMixin, db.Model):
-    __tablename__ = "users"
+    __tablename__ = "mis_users"
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
@@ -105,7 +123,7 @@ class User(UserMixin, db.Model):
 
 
 class Case(db.Model):
-    __tablename__ = "cases"
+    __tablename__ = "mis_cases"
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     objective = db.Column(db.Text, default="")
@@ -117,7 +135,7 @@ class Case(db.Model):
 
 
 class Person(db.Model):
-    __tablename__ = "people"
+    __tablename__ = "mis_people"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     type = db.Column(db.String(60), default="Person")
@@ -127,32 +145,32 @@ class Person(db.Model):
 
 
 class Note(db.Model):
-    __tablename__ = "notes"
+    __tablename__ = "mis_notes"
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
     source = db.Column(db.String(200), default="")
     reliability = db.Column(db.String(20), default="Unknown")
     confidence = db.Column(db.String(20), default="Unknown")
-    case_id = db.Column(db.Integer, db.ForeignKey("cases.id"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Evidence(db.Model):
-    __tablename__ = "evidence"
+    __tablename__ = "mis_evidence"
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     filename = db.Column(db.String(255))
     mimetype = db.Column(db.String(120), default="application/octet-stream")
     data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64), index=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("cases.id"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     verified = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class AuditLog(db.Model):
-    __tablename__ = "audit_log"
+    __tablename__ = "mis_audit_log"
     id = db.Column(db.Integer, primary_key=True)
     action = db.Column(db.String(80))
     detail = db.Column(db.Text)
@@ -323,7 +341,7 @@ def build_case_pdf(case: Case) -> bytes:
 
 
 # ============================================================
-# MPC ENCRYPTION — format: b"MIS1" + salt(16) + nonce(12) + ct+tag
+# MPC ENCRYPTION
 # ============================================================
 MPC_MAGIC = b"MIS1"
 PBKDF2_ITERATIONS = 200_000
@@ -634,11 +652,78 @@ def audit_log():
 
 
 # ============================================================
+# DEBUG ENDPOINT (temporary)
+# ============================================================
+@app.route("/__debug_db")
+def __debug_db():
+    import json
+    out = {
+        "dialect": db.engine.dialect.name,
+        "current_schema": None,
+        "schemas": [],
+        "mis_tables": [],
+        "users": [],
+    }
+    try:
+        with db.engine.begin() as conn:
+            out["current_schema"] = conn.execute(text("SELECT current_schema()")).scalar()
+    except Exception as e:
+        out["current_schema"] = f"err: {e}"
+
+    try:
+        insp = inspect(db.engine)
+        out["schemas"] = insp.get_schema_names()
+    except Exception as e:
+        out["schemas"] = f"err: {e}"
+
+    try:
+        with db.engine.begin() as conn:
+            rows = conn.execute(text(
+                "SELECT table_schema, table_name FROM information_schema.tables "
+                "WHERE table_name LIKE 'mis_%' "
+                "ORDER BY table_schema, table_name"
+            )).all()
+            out["mis_tables"] = [{"schema": r[0], "name": r[1]} for r in rows]
+    except Exception as e:
+        out["mis_tables"] = f"err: {e}"
+
+    try:
+        rows = db.session.execute(db.select(User)).scalars().all()
+        out["users"] = [
+            {"id": u.id, "username": u.username,
+             "hash_prefix": (u.password_hash or "")[:40]}
+            for u in rows
+        ]
+    except Exception as e:
+        out["users"] = f"err: {e}"
+
+    return json.dumps(out, indent=2, default=str), 200, {"Content-Type": "application/json"}
+
+
+# ============================================================
 # BOOTSTRAP
 # ============================================================
 def bootstrap():
     with app.app_context():
+        # Ensure 'mis' schema exists (Postgres only)
+        try:
+            if db.engine.dialect.name == "postgresql":
+                with db.engine.begin() as conn:
+                    conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {MIS_SCHEMA}"))
+                print(f"✅ Ensured schema: {MIS_SCHEMA}")
+        except Exception as e:
+            print(f"⚠️  Schema ensure failed: {e}")
+
+        # Make this session use the mis schema for DDL too
+        try:
+            if db.engine.dialect.name == "postgresql":
+                with db.engine.begin() as conn:
+                    conn.execute(text(f"SET search_path TO {MIS_SCHEMA}, public"))
+        except Exception as e:
+            print(f"⚠️  search_path set failed: {e}")
+
         db.create_all()
+
         u = app.config["INITIAL_USERNAME"]
         p = app.config["INITIAL_PASSWORD"]
         force = os.getenv("FORCE_SEED", "0") == "1"
@@ -675,7 +760,7 @@ def bootstrap():
 
 bootstrap()
 
-# Debug print
+# Startup debug print
 with app.app_context():
     _u = db.session.execute(db.select(User)).scalars().first()
     if _u:
