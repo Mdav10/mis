@@ -1,6 +1,5 @@
 # ============================================================
-# MIS v3 — Plain English Case Tracker
-# Quick-Add everywhere · Native phone gallery · Simple labels
+# MIS v3 — Plain English Case Tracker (with FK-safe deletes)
 # ============================================================
 
 import os
@@ -11,7 +10,7 @@ from datetime import datetime, timedelta
 
 from flask import (
     Flask, render_template, redirect, url_for, request,
-    flash, send_file, abort, jsonify, g
+    flash, send_file, abort, jsonify
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -51,18 +50,15 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
-
     _db = os.getenv("DATABASE_URL",
                     f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
     if _db.startswith("postgres://"):
         _db = _db.replace("postgres://", "postgresql://", 1)
-
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
     WTF_CSRF_TIME_LIMIT = None
     MAX_CONTENT_LENGTH = 60 * 1024 * 1024
-
     INITIAL_USERNAME = os.getenv("INITIAL_USERNAME", "Mpc")
     INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "08800Mpc!")
 
@@ -142,10 +138,9 @@ class Case(db.Model):
 
 
 class Update(db.Model):
-    """A single piece of news you learned about a case."""
     __tablename__ = "mis_updates"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
     body = db.Column(db.Text, default="")
     happened_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by = db.Column(db.String(80), default="system")
@@ -157,11 +152,10 @@ class Update(db.Model):
 
 
 class UpdateMedia(db.Model):
-    """Photo/voice attached to a news update."""
     __tablename__ = "mis_update_media"
     id = db.Column(db.Integer, primary_key=True)
-    update_id = db.Column(db.Integer, db.ForeignKey("mis_updates.id"), nullable=False)
-    kind = db.Column(db.String(20), default="photo")  # photo | voice | file
+    update_id = db.Column(db.Integer, db.ForeignKey("mis_updates.id", ondelete="CASCADE"), nullable=False)
+    kind = db.Column(db.String(20), default="photo")
     filename = db.Column(db.String(255))
     mimetype = db.Column(db.String(120), default="application/octet-stream")
     data = db.Column(db.LargeBinary)
@@ -186,8 +180,8 @@ class Entity(db.Model):
 class CaseEntity(db.Model):
     __tablename__ = "mis_case_entities"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
-    entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
+    entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id", ondelete="CASCADE"), nullable=False)
     role = db.Column(db.String(80), default="Person")
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     entity = db.relationship("Entity")
@@ -196,12 +190,12 @@ class CaseEntity(db.Model):
 class Relationship(db.Model):
     __tablename__ = "mis_relationships"
     id = db.Column(db.Integer, primary_key=True)
-    from_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
-    to_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
+    from_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id", ondelete="CASCADE"), nullable=False)
+    to_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id", ondelete="CASCADE"), nullable=False)
     relation = db.Column(db.String(80), default="knows")
     description = db.Column(db.Text, default="")
     status = db.Column(db.String(20), default="UNVERIFIED")
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     from_entity = db.relationship("Entity", foreign_keys=[from_id], backref="outgoing")
@@ -215,14 +209,14 @@ class Source(db.Model):
     description = db.Column(db.Text, default="")
     reliability = db.Column(db.String(2), default="F")
     contact_notes = db.Column(db.Text, default="")
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class TimelineEntry(db.Model):
     __tablename__ = "mis_timeline"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, default="")
     event_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -235,9 +229,9 @@ class TimelineEntry(db.Model):
 class IntelItem(db.Model):
     __tablename__ = "mis_intel"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
-    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
-    source_id = db.Column(db.Integer, db.ForeignKey("mis_sources.id"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=True)
+    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id", ondelete="SET NULL"), nullable=True)
+    source_id = db.Column(db.Integer, db.ForeignKey("mis_sources.id", ondelete="SET NULL"), nullable=True)
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
     category = db.Column(db.String(40), default="OBSERVATION")
@@ -256,8 +250,8 @@ class IntelItem(db.Model):
 class MediaItem(db.Model):
     __tablename__ = "mis_media"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
-    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=True)
+    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id", ondelete="SET NULL"), nullable=True)
     title = db.Column(db.String(200), nullable=False)
     kind = db.Column(db.String(20), default="IMAGE")
     filename = db.Column(db.String(255))
@@ -266,7 +260,7 @@ class MediaItem(db.Model):
     source_notes = db.Column(db.Text, default="")
     classification = db.Column(db.String(40), default="SECRET")
     is_original = db.Column(db.Boolean, default=True)
-    parent_id = db.Column(db.Integer, db.ForeignKey("mis_media.id"), nullable=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey("mis_media.id", ondelete="SET NULL"), nullable=True)
     derived_note = db.Column(db.Text, default="")
     data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64), index=True)
@@ -278,7 +272,7 @@ class MediaItem(db.Model):
 class AnalystNote(db.Model):
     __tablename__ = "mis_analyst"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
     category = db.Column(db.String(40), default="FACT")
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
@@ -471,7 +465,6 @@ class CaseForm(FlaskForm):
 
 
 class QuickAddForm(FlaskForm):
-    """The one box."""
     body = TextAreaField("What did you learn?", validators=[Optional()])
     case_id = SelectField("About", coerce=int, validators=[DataRequired()])
     happened_at = DateTimeField("When", format="%Y-%m-%d %H:%M", validators=[Optional()])
@@ -534,7 +527,7 @@ class ReportForm(FlaskForm):
 # ============================================================
 # HELPERS
 # ============================================================
-def case_choices(current_user_cases=None):
+def case_choices():
     rows = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
     return [(c.id, c.title) for c in rows]
 
@@ -546,18 +539,6 @@ def entity_choices():
 
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
-
-
-def parse_dt(s):
-    if not s:
-        return None
-    try:
-        return datetime.strptime(s.strip(), "%Y-%m-%d %H:%M")
-    except Exception:
-        try:
-            return datetime.strptime(s.strip(), "%Y-%m-%dT%H:%M")
-        except Exception:
-            return None
 
 
 # ============================================================
@@ -596,7 +577,7 @@ def build_case_pdf(case: Case) -> bytes:
             if u.body:
                 story.append(Paragraph(u.body.replace("\n", "<br/>"), body))
             for p in u.photos:
-                story.append(Paragraph(f"[{p.kind.upper()}] {p.filename} · sha256 {(p.sha256 or '')[:16]}…", body))
+                story.append(Paragraph(f"[{p.kind.upper()}] {p.filename}", body))
             story.append(Spacer(1, 0.2 * cm))
     else:
         story.append(Paragraph("— none —", body))
@@ -638,8 +619,6 @@ def build_briefing_pdf(days: int = 1) -> bytes:
         story.append(Paragraph(
             f"<b>{u.happened_at.strftime('%Y-%m-%d %H:%M')} · {c.title if c else '—'}</b>", body))
         story.append(Paragraph((u.body or "").replace("\n", "<br/>"), body))
-        for p in u.photos:
-            story.append(Paragraph(f"[{p.kind.upper()}] {p.filename}", body))
         story.append(Spacer(1, 0.15 * cm))
 
     doc.build(story)
@@ -710,26 +689,21 @@ def change_password():
 
 
 # ============================================================
-# ROUTES — HOME (with quick add)
+# ROUTES — HOME
 # ============================================================
 @app.route("/dashboard")
 @login_required
 def dashboard():
     cases = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
-    # Recent updates feed
     recent = db.session.execute(
         db.select(Update).order_by(Update.happened_at.desc()).limit(20)
     ).scalars().all()
-    return render_template(
-        "dashboard.html",
-        cases=cases,
-        recent=recent,
-        case_choices=case_choices()
-    )
+    return render_template("dashboard.html", cases=cases, recent=recent,
+                           case_choices=case_choices())
 
 
 # ============================================================
-# ROUTES — QUICK ADD (the one box)
+# ROUTES — QUICK ADD
 # ============================================================
 @app.route("/add", methods=["POST"])
 @login_required
@@ -743,40 +717,38 @@ def quick_add():
     body = (form.body.data or "").strip()
     when = form.happened_at.data or datetime.utcnow()
 
-    # Collect files
-    photos = []
+    files = []
     if "photos" in request.files:
         for f in request.files.getlist("photos"):
             if f and f.filename:
-                photos.append(("photo", f))
+                files.append(("photo", f))
     if "voice" in request.files:
         f = request.files.get("voice")
         if f and f.filename:
-            photos.append(("voice", f))
+            files.append(("voice", f))
 
-    if not body and not photos:
+    if not body and not files:
         flash("Type something or add a photo/voice.", "error")
         return redirect(request.referrer or url_for("dashboard"))
 
-    if not body and photos:
-        body = f"[{photos[0][0].capitalize()} added]"
+    if not body and files:
+        body = f"[{files[0][0].capitalize()} added]"
 
     u = Update(case_id=form.case_id.data, body=body, happened_at=when,
                created_by=current_user.username)
     db.session.add(u)
     db.session.flush()
 
-    for kind, f in photos:
+    for kind, f in files:
         raw = f.read()
         if not raw:
             continue
-        um = UpdateMedia(
+        db.session.add(UpdateMedia(
             update_id=u.id, kind=kind,
             filename=secure_filename(f.filename),
             mimetype=f.mimetype or "application/octet-stream",
             data=raw, sha256=sha256_bytes(raw),
-        )
-        db.session.add(um)
+        ))
 
     db.session.commit()
     audit("update_add", f"Case #{u.case_id}: {body[:40]}", actor=current_user.username)
@@ -825,7 +797,6 @@ def case_detail(cid):
         flash("Case updated.", "success")
         return redirect(url_for("case_detail", cid=c.id))
 
-    # entity form for "add person/place"
     entity_form = EntityForm()
     rel_form = RelationshipForm()
     rel_form.from_id.choices = entity_choices()
@@ -844,8 +815,39 @@ def case_detail(cid):
 @login_required
 def case_delete(cid):
     c = db.session.get(Case, cid) or abort(404)
+
+    # Explicit, ordered cascade — safest across Postgres and SQLite
+    # 1) Media files attached to updates
+    upd_ids = [u.id for u in c.updates]
+    if upd_ids:
+        db.session.execute(
+            UpdateMedia.__table__.delete().where(UpdateMedia.update_id.in_(upd_ids))
+        )
+    # 2) Updates
+    db.session.execute(Update.__table__.delete().where(Update.case_id == c.id))
+    # 3) Case<->Entity links
+    db.session.execute(CaseEntity.__table__.delete().where(CaseEntity.case_id == c.id))
+    # 4) Analyst notes
+    db.session.execute(AnalystNote.__table__.delete().where(AnalystNote.case_id == c.id))
+    # 5) Intel items
+    db.session.execute(IntelItem.__table__.delete().where(IntelItem.case_id == c.id))
+    # 6) Timeline entries
+    db.session.execute(TimelineEntry.__table__.delete().where(TimelineEntry.case_id == c.id))
+    # 7) MediaItem (legacy)
+    db.session.execute(MediaItem.__table__.delete().where(MediaItem.case_id == c.id))
+    # 8) Relationships pointing at this case
+    db.session.execute(
+        Relationship.__table__.delete().where(Relationship.case_id == c.id)
+    )
+    # 9) Sources pointing at this case
+    db.session.execute(
+        Source.__table__.delete().where(Source.case_id == c.id)
+    )
+    # 10) Finally, the case
     db.session.delete(c)
     db.session.commit()
+
+    audit("case_delete", f"Case #{cid}", actor=current_user.username)
     flash("Case deleted.", "success")
     return redirect(url_for("cases"))
 
@@ -876,7 +878,6 @@ def update_edit(uid):
     if form.validate_on_submit():
         u.body = (form.body.data or "").strip() or u.body
         u.happened_at = form.happened_at.data
-        # add new files if any
         for kind, key in [("photo", "photos"), ("voice", "voice")]:
             if key in request.files:
                 files = request.files.getlist(key) if key == "photos" else [request.files.get(key)]
@@ -901,6 +902,10 @@ def update_edit(uid):
 def update_delete(uid):
     u = db.session.get(Update, uid) or abort(404)
     cid = u.case_id
+    # delete attached media first
+    db.session.execute(
+        UpdateMedia.__table__.delete().where(UpdateMedia.update_id == u.id)
+    )
     db.session.delete(u)
     db.session.commit()
     flash("Deleted.", "success")
@@ -959,6 +964,15 @@ def entity_detail(eid):
 @login_required
 def entity_delete(eid):
     e = db.session.get(Entity, eid) or abort(404)
+    # clear links, relationships referencing this entity
+    db.session.execute(
+        CaseEntity.__table__.delete().where(CaseEntity.entity_id == e.id)
+    )
+    db.session.execute(
+        Relationship.__table__.delete().where(
+            or_(Relationship.from_id == e.id, Relationship.to_id == e.id)
+        )
+    )
     db.session.delete(e)
     db.session.commit()
     return redirect(url_for("entities"))
@@ -987,21 +1001,6 @@ def case_entity_delete(link_id):
     cid = link.case_id
     db.session.delete(link)
     db.session.commit()
-    return redirect(url_for("case_detail", cid=cid))
-
-
-@app.route("/link-entity", methods=["POST"])
-@login_required
-def link_entity():
-    """Attach existing entity to case."""
-    cid = request.form.get("case_id", type=int)
-    eid = request.form.get("entity_id", type=int)
-    if cid and eid:
-        if not db.session.execute(
-            db.select(CaseEntity).filter_by(case_id=cid, entity_id=eid)
-        ).scalar():
-            db.session.add(CaseEntity(case_id=cid, entity_id=eid, role="Person"))
-            db.session.commit()
     return redirect(url_for("case_detail", cid=cid))
 
 
