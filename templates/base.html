@@ -2,27 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>{% block title %}MIS{% endblock %} · Mugisha's Intelligence System</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+
 {% if current_user.is_authenticated %}
+{% set active = request.endpoint %}
 <header class="topbar">
-  <div class="brand"><strong>MIS</strong> <span class="dim">Intelligence System</span></div>
+  <div class="brand"><strong>MIS</strong><span class="dim">Intelligence System</span></div>
   <nav>
-    <a href="{{ url_for('dashboard') }}">Home</a>
-    <a href="{{ url_for('cases') }}">Cases</a>
-    <a href="{{ url_for('people') }}">People</a>
-    <a href="{{ url_for('notes') }}">Notes</a>
-    <a href="{{ url_for('evidence') }}">Evidence</a>
-    <a href="{{ url_for('search') }}">Search</a>
-    <a href="{{ url_for('audit_log') }}">Audit</a>
-    <a href="{{ url_for('change_password') }}">🔑</a>
+    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">Home</a>
+    <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">Cases</a>
+    <a href="{{ url_for('people') }}" class="{{ 'active' if active=='people' }}">People</a>
+    <a href="{{ url_for('notes') }}" class="{{ 'active' if active=='notes' }}">Notes</a>
+    <a href="{{ url_for('evidence') }}" class="{{ 'active' if active=='evidence' }}">Evidence</a>
+    <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">Search</a>
+    <a href="{{ url_for('audit_log') }}" class="{{ 'active' if active=='audit_log' }}">Audit</a>
+    <a href="{{ url_for('change_password') }}" class="{{ 'active' if active=='change_password' }}">🔑</a>
     <a href="{{ url_for('logout') }}" class="danger">Logout</a>
   </nav>
 </header>
 {% endif %}
+
 <main class="container">
   {% with msgs = get_flashed_messages(with_categories=true) %}
     {% if msgs %}<div class="flashes">
@@ -31,6 +37,22 @@
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
-<footer class="footer"><span class="dim">Collect → Verify → Connect → Analyze → Protect → Act</span></footer>
+
+{% if current_user.is_authenticated %}
+<nav class="mobilenav">
+  <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">
+    <span class="ico">🏠</span>Home</a>
+  <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">
+    <span class="ico">📁</span>Cases</a>
+  <a href="{{ url_for('notes') }}" class="{{ 'active' if active=='notes' }}">
+    <span class="ico">📝</span>Notes</a>
+  <a href="{{ url_for('evidence') }}" class="{{ 'active' if active=='evidence' }}">
+    <span class="ico">📄</span>Evidence</a>
+  <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">
+    <span class="ico">🔎</span>Search</a>
+</nav>
+{% endif %}
+
+<footer class="footer">Collect → Verify → Connect → Analyze → Protect → Act</footer>
 </body>
 </html>
