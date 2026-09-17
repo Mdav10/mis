@@ -1,5 +1,6 @@
 # ============================================================
-# MIS v3 — Plain English Case Tracker (with FK-safe deletes)
+# MIS v3 — Plain English Case Tracker
+# Bulletproof cascade deletes · Quick-Add everywhere
 # ============================================================
 
 import os
@@ -66,7 +67,6 @@ class Config:
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# make csrf_token available to all templates
 from flask_wtf.csrf import generate_csrf
 
 @app.context_processor
@@ -140,7 +140,7 @@ class Case(db.Model):
 class Update(db.Model):
     __tablename__ = "mis_updates"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     body = db.Column(db.Text, default="")
     happened_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by = db.Column(db.String(80), default="system")
@@ -154,7 +154,7 @@ class Update(db.Model):
 class UpdateMedia(db.Model):
     __tablename__ = "mis_update_media"
     id = db.Column(db.Integer, primary_key=True)
-    update_id = db.Column(db.Integer, db.ForeignKey("mis_updates.id", ondelete="CASCADE"), nullable=False)
+    update_id = db.Column(db.Integer, db.ForeignKey("mis_updates.id"), nullable=False)
     kind = db.Column(db.String(20), default="photo")
     filename = db.Column(db.String(255))
     mimetype = db.Column(db.String(120), default="application/octet-stream")
@@ -180,8 +180,8 @@ class Entity(db.Model):
 class CaseEntity(db.Model):
     __tablename__ = "mis_case_entities"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
-    entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id", ondelete="CASCADE"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
+    entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
     role = db.Column(db.String(80), default="Person")
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     entity = db.relationship("Entity")
@@ -190,12 +190,12 @@ class CaseEntity(db.Model):
 class Relationship(db.Model):
     __tablename__ = "mis_relationships"
     id = db.Column(db.Integer, primary_key=True)
-    from_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id", ondelete="CASCADE"), nullable=False)
-    to_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id", ondelete="CASCADE"), nullable=False)
+    from_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
+    to_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
     relation = db.Column(db.String(80), default="knows")
     description = db.Column(db.Text, default="")
     status = db.Column(db.String(20), default="UNVERIFIED")
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="SET NULL"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     from_entity = db.relationship("Entity", foreign_keys=[from_id], backref="outgoing")
@@ -209,14 +209,14 @@ class Source(db.Model):
     description = db.Column(db.Text, default="")
     reliability = db.Column(db.String(2), default="F")
     contact_notes = db.Column(db.Text, default="")
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="SET NULL"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class TimelineEntry(db.Model):
     __tablename__ = "mis_timeline"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, default="")
     event_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -229,9 +229,9 @@ class TimelineEntry(db.Model):
 class IntelItem(db.Model):
     __tablename__ = "mis_intel"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=True)
-    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id", ondelete="SET NULL"), nullable=True)
-    source_id = db.Column(db.Integer, db.ForeignKey("mis_sources.id", ondelete="SET NULL"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
+    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
+    source_id = db.Column(db.Integer, db.ForeignKey("mis_sources.id"), nullable=True)
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
     category = db.Column(db.String(40), default="OBSERVATION")
@@ -250,8 +250,8 @@ class IntelItem(db.Model):
 class MediaItem(db.Model):
     __tablename__ = "mis_media"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=True)
-    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id", ondelete="SET NULL"), nullable=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
+    timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
     title = db.Column(db.String(200), nullable=False)
     kind = db.Column(db.String(20), default="IMAGE")
     filename = db.Column(db.String(255))
@@ -260,7 +260,7 @@ class MediaItem(db.Model):
     source_notes = db.Column(db.Text, default="")
     classification = db.Column(db.String(40), default="SECRET")
     is_original = db.Column(db.Boolean, default=True)
-    parent_id = db.Column(db.Integer, db.ForeignKey("mis_media.id", ondelete="SET NULL"), nullable=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey("mis_media.id"), nullable=True)
     derived_note = db.Column(db.Text, default="")
     data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64), index=True)
@@ -272,7 +272,7 @@ class MediaItem(db.Model):
 class AnalystNote(db.Model):
     __tablename__ = "mis_analyst"
     id = db.Column(db.Integer, primary_key=True)
-    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id", ondelete="CASCADE"), nullable=False)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     category = db.Column(db.String(40), default="FACT")
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
@@ -419,6 +419,89 @@ def auto_migrate():
                 print(f"🛠  Migrated: {table}.{col_name}")
             except Exception as e:
                 print(f"⚠️  Migration failed {table}.{col_name}: {e}")
+
+
+# ============================================================
+# BULLETPROOF DELETE HELPERS
+# ============================================================
+def delete_case_and_children(cid):
+    """Delete a case and every row in every mis_* table that references it."""
+    try:
+        with db.engine.begin() as conn:
+            # 1) Handle mis_update_media via mis_updates
+            conn.execute(text("""
+                DELETE FROM mis_update_media
+                WHERE update_id IN (SELECT id FROM mis_updates WHERE case_id = :cid)
+            """), {"cid": cid})
+
+            # 2) Find every mis_* table (other than mis_cases) that has a case_id column
+            rows = conn.execute(text("""
+                SELECT table_name
+                FROM information_schema.columns
+                WHERE column_name = 'case_id'
+                  AND table_schema = current_schema()
+                  AND table_name LIKE 'mis_%'
+                  AND table_name <> 'mis_cases'
+            """)).fetchall()
+
+            for (tbl,) in rows:
+                try:
+                    conn.execute(text(f"DELETE FROM {tbl} WHERE case_id = :cid"),
+                                 {"cid": cid})
+                except Exception as e:
+                    print(f"⚠️  Skipped {tbl}: {e}")
+
+            # 3) Finally the case
+            conn.execute(text("DELETE FROM mis_cases WHERE id = :cid"), {"cid": cid})
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def delete_entity_and_children(eid):
+    try:
+        with db.engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE column_name IN ('entity_id', 'from_id', 'to_id')
+                  AND table_schema = current_schema()
+                  AND table_name LIKE 'mis_%'
+                  AND table_name <> 'mis_entities'
+            """)).fetchall()
+            for tbl, col in rows:
+                try:
+                    conn.execute(text(f"DELETE FROM {tbl} WHERE {col} = :eid"),
+                                 {"eid": eid})
+                except Exception as e:
+                    print(f"⚠️  Skipped {tbl}.{col}: {e}")
+            conn.execute(text("DELETE FROM mis_entities WHERE id = :eid"), {"eid": eid})
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def delete_update_and_children(uid):
+    try:
+        with db.engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT table_name
+                FROM information_schema.columns
+                WHERE column_name = 'update_id'
+                  AND table_schema = current_schema()
+                  AND table_name LIKE 'mis_%'
+                  AND table_name <> 'mis_updates'
+            """)).fetchall()
+            for (tbl,) in rows:
+                try:
+                    conn.execute(text(f"DELETE FROM {tbl} WHERE update_id = :uid"),
+                                 {"uid": uid})
+                except Exception as e:
+                    print(f"⚠️  Skipped {tbl}: {e}")
+            conn.execute(text("DELETE FROM mis_updates WHERE id = :uid"), {"uid": uid})
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 # ============================================================
@@ -815,38 +898,10 @@ def case_detail(cid):
 @login_required
 def case_delete(cid):
     c = db.session.get(Case, cid) or abort(404)
-
-    # Explicit, ordered cascade — safest across Postgres and SQLite
-    # 1) Media files attached to updates
-    upd_ids = [u.id for u in c.updates]
-    if upd_ids:
-        db.session.execute(
-            UpdateMedia.__table__.delete().where(UpdateMedia.update_id.in_(upd_ids))
-        )
-    # 2) Updates
-    db.session.execute(Update.__table__.delete().where(Update.case_id == c.id))
-    # 3) Case<->Entity links
-    db.session.execute(CaseEntity.__table__.delete().where(CaseEntity.case_id == c.id))
-    # 4) Analyst notes
-    db.session.execute(AnalystNote.__table__.delete().where(AnalystNote.case_id == c.id))
-    # 5) Intel items
-    db.session.execute(IntelItem.__table__.delete().where(IntelItem.case_id == c.id))
-    # 6) Timeline entries
-    db.session.execute(TimelineEntry.__table__.delete().where(TimelineEntry.case_id == c.id))
-    # 7) MediaItem (legacy)
-    db.session.execute(MediaItem.__table__.delete().where(MediaItem.case_id == c.id))
-    # 8) Relationships pointing at this case
-    db.session.execute(
-        Relationship.__table__.delete().where(Relationship.case_id == c.id)
-    )
-    # 9) Sources pointing at this case
-    db.session.execute(
-        Source.__table__.delete().where(Source.case_id == c.id)
-    )
-    # 10) Finally, the case
-    db.session.delete(c)
-    db.session.commit()
-
+    ok, err = delete_case_and_children(cid)
+    if not ok:
+        flash(f"Delete failed: {err}", "error")
+        return redirect(url_for("case_detail", cid=cid))
     audit("case_delete", f"Case #{cid}", actor=current_user.username)
     flash("Case deleted.", "success")
     return redirect(url_for("cases"))
@@ -902,12 +957,10 @@ def update_edit(uid):
 def update_delete(uid):
     u = db.session.get(Update, uid) or abort(404)
     cid = u.case_id
-    # delete attached media first
-    db.session.execute(
-        UpdateMedia.__table__.delete().where(UpdateMedia.update_id == u.id)
-    )
-    db.session.delete(u)
-    db.session.commit()
+    ok, err = delete_update_and_children(uid)
+    if not ok:
+        flash(f"Delete failed: {err}", "error")
+        return redirect(url_for("case_detail", cid=cid))
     flash("Deleted.", "success")
     return redirect(url_for("case_detail", cid=cid))
 
@@ -964,17 +1017,10 @@ def entity_detail(eid):
 @login_required
 def entity_delete(eid):
     e = db.session.get(Entity, eid) or abort(404)
-    # clear links, relationships referencing this entity
-    db.session.execute(
-        CaseEntity.__table__.delete().where(CaseEntity.entity_id == e.id)
-    )
-    db.session.execute(
-        Relationship.__table__.delete().where(
-            or_(Relationship.from_id == e.id, Relationship.to_id == e.id)
-        )
-    )
-    db.session.delete(e)
-    db.session.commit()
+    ok, err = delete_entity_and_children(eid)
+    if not ok:
+        flash(f"Delete failed: {err}", "error")
+        return redirect(url_for("entities"))
     return redirect(url_for("entities"))
 
 
