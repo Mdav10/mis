@@ -1,7 +1,7 @@
 # ============================================================
 # MIS — Mugisha's Intelligence System
 # Single-file Flask app
-# Isolated to Postgres schema "mis" + mis_* table prefix
+# Isolated by mis_* table prefix (works on Neon pooler)
 # ============================================================
 
 import os
@@ -50,8 +50,6 @@ load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
-MIS_SCHEMA = "mis"
-
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
@@ -65,17 +63,10 @@ class Config:
 
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-
-    _engine_opts = {
+    SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
     }
-    # Force MIS to live in its own Postgres schema
-    if _db.startswith("postgresql"):
-        _engine_opts["connect_args"] = {
-            "options": f"-c search_path={MIS_SCHEMA},public"
-        }
-    SQLALCHEMY_ENGINE_OPTIONS = _engine_opts
 
     WTF_CSRF_TIME_LIMIT = None
     MAX_CONTENT_LENGTH = 40 * 1024 * 1024
@@ -659,29 +650,14 @@ def __debug_db():
     import json
     out = {
         "dialect": db.engine.dialect.name,
-        "current_schema": None,
-        "schemas": [],
         "mis_tables": [],
         "users": [],
     }
     try:
         with db.engine.begin() as conn:
-            out["current_schema"] = conn.execute(text("SELECT current_schema()")).scalar()
-    except Exception as e:
-        out["current_schema"] = f"err: {e}"
-
-    try:
-        insp = inspect(db.engine)
-        out["schemas"] = insp.get_schema_names()
-    except Exception as e:
-        out["schemas"] = f"err: {e}"
-
-    try:
-        with db.engine.begin() as conn:
             rows = conn.execute(text(
                 "SELECT table_schema, table_name FROM information_schema.tables "
-                "WHERE table_name LIKE 'mis_%' "
-                "ORDER BY table_schema, table_name"
+                "WHERE table_name LIKE 'mis_%' ORDER BY table_name"
             )).all()
             out["mis_tables"] = [{"schema": r[0], "name": r[1]} for r in rows]
     except Exception as e:
@@ -705,23 +681,6 @@ def __debug_db():
 # ============================================================
 def bootstrap():
     with app.app_context():
-        # Ensure 'mis' schema exists (Postgres only)
-        try:
-            if db.engine.dialect.name == "postgresql":
-                with db.engine.begin() as conn:
-                    conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {MIS_SCHEMA}"))
-                print(f"✅ Ensured schema: {MIS_SCHEMA}")
-        except Exception as e:
-            print(f"⚠️  Schema ensure failed: {e}")
-
-        # Make this session use the mis schema for DDL too
-        try:
-            if db.engine.dialect.name == "postgresql":
-                with db.engine.begin() as conn:
-                    conn.execute(text(f"SET search_path TO {MIS_SCHEMA}, public"))
-        except Exception as e:
-            print(f"⚠️  search_path set failed: {e}")
-
         db.create_all()
 
         u = app.config["INITIAL_USERNAME"]
