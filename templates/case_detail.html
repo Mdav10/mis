@@ -1,283 +1,131 @@
 {% extends "base.html" %}
-{% block title %}OP-{{ '%04d'|format(case.id) }}{% endblock %}
+{% block title %}{{ case.title }}{% endblock %}
 {% block content %}
-<h1>OP-{{ '%04d'|format(case.id) }} — {{ case.title }}</h1>
 
-{# ---- Case header + edit ---- #}
-<section class="card">
-  <h2>Case Parameters</h2>
-  <form method="POST">
-    {{ form.hidden_tag() }}
-    <label>Title</label>{{ form.title() }}
-    <label>Subject</label>{{ form.subject() }}
-    <label>Objective</label>{{ form.objective(rows=2) }}
-    <label>Purpose / Legal Basis</label>{{ form.legal_note(rows=2) }}
-    <div class="row">
-      <div><label>Status</label>{{ form.status() }}</div>
-      <div><label>Classification</label>{{ form.classification() }}</div>
-      <div><label>Threat</label>{{ form.threat_level() }}</div>
+<h1>{{ case.title }}</h1>
+{% if case.subject %}<p class="subtitle-line dim">About: {{ case.subject }}</p>{% endif %}
+
+<section class="card quick-add">
+  <h2>What did you learn?</h2>
+  <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="case_id" value="{{ case.id }}">
+    <textarea name="body" rows="3" placeholder="Type here..."></textarea>
+    <label>When</label>
+    <input type="datetime-local" name="happened_at" class="whenField">
+    <div class="attach-row">
+      <label class="attach">📷 Add Photos
+        <input type="file" name="photos" accept="image/*" multiple>
+      </label>
+      <label class="attach">🎙 Add Voice
+        <input type="file" name="voice" accept="audio/*">
+      </label>
     </div>
-    <div class="row">
-      <div><label>Priority</label>{{ form.priority() }}</div>
-      <div><label>Due</label>{{ form.due_date(placeholder="YYYY-MM-DD HH:MM") }}</div>
-      <div></div>
-    </div>
-    <button class="primary">Update Case</button>
+    <button class="primary big">Save</button>
   </form>
 </section>
 
-{# ---- Encrypted export ---- #}
-<section class="card highlight">
-  <h2>Encrypted Case Export</h2>
-  <p class="dim">Generates a full case file PDF sealed with AES-256-GCM (PBKDF2-SHA256, 200,000 iters). Decrypt with Mpcipher Tool using the same passphrase.</p>
-  <form method="POST" action="{{ url_for('case_report', cid=case.id) }}">
-    {{ report_form.hidden_tag() }}
-    {{ report_form.password(placeholder="TRANSMISSION PASSPHRASE") }}
-    {{ report_form.submit(class_="primary") }}
-  </form>
-</section>
-
-{# ---- TIMELINE ---- #}
 <section class="card">
-  <h2>◷ Timeline · {{ case.timeline|length }}</h2>
-  <form method="POST" action="{{ url_for('timeline_add', cid=case.id) }}">
-    {{ timeline_form.hidden_tag() }}
-    <label>Title</label>{{ timeline_form.title(placeholder="What happened") }}
-    <label>Description</label>{{ timeline_form.description(rows=2) }}
-    <div class="row">
-      <div><label>Event Time</label>{{ timeline_form.event_at(placeholder="YYYY-MM-DD HH:MM") }}</div>
-      <div><label>Category</label>{{ timeline_form.category() }}</div>
-      <div><label>Classification</label>{{ timeline_form.classification() }}</div>
-    </div>
-    <button class="primary">Add Timeline Entry</button>
-  </form>
-
-  {% if case.timeline %}
-  <ul class="list" style="margin-top:12px;">
-    {% for t in case.timeline|sort(attribute='event_at', reverse=True) %}
-    <li style="flex-direction:column;align-items:flex-start;gap:6px;">
-      <div style="width:100%">
-        <b style="color:var(--amber)">{{ t.event_at.strftime('%Y-%m-%d %H:%M') }}</b>
-        <span class="badge">{{ t.category }}</span>
-        <span class="badge classified">{{ t.classification }}</span>
-        <span class="dim">by {{ t.created_by }}</span>
+  <h2>History</h2>
+  {% if case.updates %}
+  <ul class="updates">
+    {% for u in case.updates %}
+    <li>
+      <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
+      {% if u.body %}<div class="upd-body">{{ u.body }}</div>{% endif %}
+      {% if u.photos %}
+      <div class="upd-media">
+        {% for m in u.photos %}
+          {% if m.kind == 'photo' %}
+            <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy">
+          {% else %}
+            <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
+          {% endif %}
+        {% endfor %}
       </div>
-      <div style="width:100%;font-weight:600">{{ t.title }}</div>
-      {% if t.description %}<div class="dim" style="width:100%">{{ t.description }}</div>{% endif %}
-      {% if t.intel %}
-        <div class="dim" style="width:100%">→ {{ t.intel|length }} intel item(s): 
-          {% for i in t.intel %}<span class="badge">{{ i.title[:30] }}</span> {% endfor %}
-        </div>
       {% endif %}
-      {% if t.media %}
-        <div class="dim" style="width:100%">→ {{ t.media|length }} media item(s): 
-          {% for m in t.media %}<span class="badge">{{ m.kind }}: {{ m.title[:24] }}</span> {% endfor %}
-        </div>
-      {% endif %}
-      <form method="POST" action="{{ url_for('timeline_delete', tid=t.id) }}"
-            onsubmit="return confirm('Delete timeline entry?');" style="margin-left:auto;">
-        <button class="danger-btn">✕</button>
-      </form>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="dim">// Timeline empty</p>{% endif %}
-</section>
-
-{# ---- INTEL ---- #}
-<section class="card">
-  <h2>▤ Intelligence · {{ case.intel|length }}</h2>
-  <form method="POST" action="{{ url_for('intel_add', cid=case.id) }}">
-    {{ intel_form.hidden_tag() }}
-    <label>Title</label>{{ intel_form.title() }}
-    <label>Statement</label>{{ intel_form.body(rows=3, placeholder="Write exactly what is claimed or observed. Do not embellish.") }}
-    <div class="row">
-      <div><label>Category</label>{{ intel_form.category() }}</div>
-      <div><label>Classification</label>{{ intel_form.classification() }}</div>
-      <div><label>Source</label>{{ intel_form.source_id() }}</div>
-    </div>
-    <div class="row">
-      <div><label>Source Reliability (A–F)</label>{{ intel_form.source_reliability() }}</div>
-      <div><label>Information Confidence (1–6)</label>{{ intel_form.info_confidence() }}</div>
-      <div><label>Status</label>{{ intel_form.status() }}</div>
-    </div>
-    <label class="check">{{ intel_form.is_claim() }} This is a CLAIM (from a source)</label>
-    <label class="check">{{ intel_form.is_fact() }} This is an established FACT (independently verified)</label>
-    <label>Analyst Comment</label>{{ intel_form.analyst_comment(rows=2) }}
-    <label>Attach to Timeline Entry</label>{{ intel_form.timeline_id() }}
-    <button class="primary">File Intel</button>
-  </form>
-
-  {% if case.intel %}
-  <ul class="list" style="margin-top:12px;">
-    {% for i in case.intel %}
-    <li style="flex-direction:column;align-items:flex-start;gap:6px;">
-      <div style="width:100%">
-        <b style="color:var(--amber)">{{ i.title }}</b>
-        <span class="badge">{{ i.category }}</span>
-        <span class="badge classified">{{ i.classification }}</span>
-        <span class="badge {{ 'ok' if i.status in ['VERIFIED','CORROBORATED'] else 'warn' if i.status in ['DISPUTED','FALSE'] else '' }}">{{ i.status }}</span>
-        {% if i.is_fact %}<span class="badge ok">FACT</span>{% endif %}
-        {% if i.is_claim %}<span class="badge warn">CLAIM</span>{% endif %}
-      </div>
-      <div style="width:100%">{{ i.body }}</div>
-      <div class="dim" style="width:100%">
-        Source: {{ i.source.handle if i.source else '—' }} · Rel {{ i.source_reliability }} · Conf {{ i.info_confidence }}
-        {% if i.timeline_entry %} · Linked to: {{ i.timeline_entry.title }}{% endif %}
-        {% if i.analyst_comment %}<br>Analyst: {{ i.analyst_comment }}{% endif %}
-      </div>
-      <div style="display:flex;gap:6px;">
-        <form method="POST" action="{{ url_for('intel_status', iid=i.id, new_status='CORROBORATED') }}"><button class="small">Corroborate</button></form>
-        <form method="POST" action="{{ url_for('intel_status', iid=i.id, new_status='VERIFIED') }}"><button class="small">Verify</button></form>
-        <form method="POST" action="{{ url_for('intel_status', iid=i.id, new_status='DISPUTED') }}"><button class="small">Dispute</button></form>
-        <form method="POST" action="{{ url_for('intel_status', iid=i.id, new_status='FALSE') }}"><button class="small">False</button></form>
-        <form method="POST" action="{{ url_for('intel_delete', iid=i.id) }}"
-              onsubmit="return confirm('Delete intel?');"><button class="danger-btn">✕</button></form>
+      <div class="upd-actions">
+        <a href="{{ url_for('update_edit', uid=u.id) }}">edit</a>
+        <form method="POST" action="{{ url_for('update_delete', uid=u.id) }}"
+              onsubmit="return confirm('Delete this update?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="link-btn">delete</button>
+        </form>
       </div>
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">// No intel items</p>{% endif %}
+  {% else %}<p class="dim">Nothing yet. Add your first update above.</p>{% endif %}
 </section>
 
-{# ---- MEDIA ---- #}
 <section class="card">
-  <h2>⬢ Media / Evidence · {{ case.media|length }}</h2>
-  <form method="POST" action="{{ url_for('media_add', cid=case.id) }}" enctype="multipart/form-data">
-    {{ media_form.hidden_tag() }}
-    <label>Title</label>{{ media_form.title() }}
-    <label>Kind</label>{{ media_form.kind() }}
-    <label>File</label>{{ media_form.file(accept="image/*,audio/*,video/*,application/pdf") }}
-    <label>Description (what you observe)</label>{{ media_form.description(rows=2) }}
-    <label>Provenance / Source</label>{{ media_form.source_notes(rows=2, placeholder="Where / how you obtained it. Never speculate.") }}
-    <label>Classification</label>{{ media_form.classification() }}
-    <label class="check">{{ media_form.encrypt() }} Encrypt at rest</label>
-    {{ media_form.passphrase(placeholder="Encryption passphrase (if encrypting)") }}
-    <div class="row">
-      <div><label>Derived from (original)</label>{{ media_form.parent_id() }}</div>
-      <div><label>Derivation note</label>{{ media_form.derived_note(placeholder="cropped / enhanced / blurred") }}</div>
-      <div><label>Attach to Timeline</label>{{ media_form.timeline_id() }}</div>
-    </div>
-    <button class="primary">Secure Media</button>
-  </form>
-
-  {% if case.media %}
-  <ul class="list" style="margin-top:12px;">
-    {% for m in case.media %}
-    <li style="flex-direction:column;align-items:flex-start;gap:6px;">
-      <div style="width:100%">
-        <b style="color:var(--amber)">#{{ m.id }} {{ m.title }}</b>
-        <span class="badge">{{ m.kind }}</span>
-        <span class="badge classified">{{ m.classification }}</span>
-        {% if m.encrypted %}<span class="badge ok">ENCRYPTED</span>{% endif %}
-        {% if not m.is_original %}<span class="badge warn">DERIVED — {{ m.derived_note }}</span>{% endif %}
-        {% if m.parent %}<span class="dim">from #{{ m.parent.id }}</span>{% endif %}
-      </div>
-      {% if m.description %}<div class="dim" style="width:100%">Obs: {{ m.description }}</div>{% endif %}
-      {% if m.source_notes %}<div class="dim" style="width:100%">Src: {{ m.source_notes }}</div>{% endif %}
-      <div class="dim" style="width:100%">SHA-256: <code>{{ m.sha256[:40] }}…</code></div>
-      <div style="display:flex;gap:6px;">
-        {% if m.encrypted %}
-          <a class="small" style="padding:6px 12px;border:1px solid var(--amber);border-radius:2px;font-size:10px;letter-spacing:1px;"
-             href="{{ url_for('media_view', mid=m.id) }}">UNLOCK</a>
-        {% else %}
-          <a class="small" style="padding:6px 12px;border:1px solid var(--amber);border-radius:2px;font-size:10px;letter-spacing:1px;"
-             href="{{ url_for('media_view', mid=m.id) }}" target="_blank">VIEW</a>
-          <a class="small" style="padding:6px 12px;border:1px solid var(--amber);border-radius:2px;font-size:10px;letter-spacing:1px;"
-             href="{{ url_for('media_download', mid=m.id) }}">DOWNLOAD</a>
-        {% endif %}
-        <form method="POST" action="{{ url_for('media_delete', mid=m.id) }}"
-              onsubmit="return confirm('Delete media?');"><button class="danger-btn">✕</button></form>
-      </div>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="dim">// No media</p>{% endif %}
-</section>
-
-{# ---- ENTITIES ON CASE ---- #}
-<section class="card">
-  <h2>◍ Entities on Case · {{ case.links|length }}</h2>
-  <form method="POST" action="{{ url_for('case_entity_add', cid=case.id) }}">
-    {{ case_entity_form.hidden_tag() }}
-    <div class="row">
-      <div><label>Entity</label>{{ case_entity_form.entity_id() }}</div>
-      <div><label>Role</label>{{ case_entity_form.role() }}</div>
-      <div><label></label><button class="primary">Attach</button></div>
-    </div>
-  </form>
+  <h2>People &amp; Places on this case</h2>
   {% if case.links %}
   <ul class="list">
     {% for link in case.links %}
     <li>
-      <div style="flex:1 1 100%">
-        <a href="{{ url_for('entity_detail', eid=link.entity.id) }}">
-          <b style="color:var(--amber)">{{ link.entity.name }}</b>
-        </a>
-        <span class="badge">{{ link.entity.type }}</span>
-        <span class="badge classified">{{ link.role }}</span>
-        <span class="badge {{ 'warn' if link.entity.threat_level in ['HIGH','CRITICAL'] else '' }}">{{ link.entity.threat_level }}</span>
-        {% if link.entity.region and link.entity.region != '—' %}<span class="dim">◍ {{ link.entity.region }}</span>{% endif %}
-      </div>
+      <a href="{{ url_for('entity_detail', eid=link.entity.id) }}"><b>{{ link.entity.name }}</b></a>
+      <span class="badge">{{ link.entity.type }}</span>
       <form method="POST" action="{{ url_for('case_entity_delete', link_id=link.id) }}"
-            onsubmit="return confirm('Detach?');"><button class="danger-btn">✕</button></form>
+            onsubmit="return confirm('Remove from case?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-btn">remove</button>
+      </form>
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">// No entities attached</p>{% endif %}
-</section>
+  {% else %}<p class="dim">Nobody added yet.</p>{% endif %}
 
-{# ---- RELATIONSHIPS ---- #}
-<section class="card">
-  <h2>◇ Relationships</h2>
-  <form method="POST" action="{{ url_for('relationships') }}?case_id={{ case.id }}">
-    {{ rel_form.hidden_tag() }}
-    <div class="row">
-      <div><label>From</label>{{ rel_form.from_id() }}</div>
-      <div><label>Relation</label>{{ rel_form.relation() }}</div>
-      <div><label>To</label>{{ rel_form.to_id() }}</div>
-    </div>
-    <label>Description</label>{{ rel_form.description(rows=2) }}
-    <label>Status</label>{{ rel_form.status() }}
-    <button class="primary">Record Relationship</button>
+  <form method="POST" action="{{ url_for('case_entity_add', cid=case.id) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input name="name" placeholder="Name" required>
+    <select name="type">
+      <option>Person</option><option>Place</option><option>Organisation</option>
+      <option>Vehicle</option><option>Event</option><option>Other</option>
+    </select>
+    <button class="primary">Add</button>
   </form>
 </section>
 
-{# ---- ANALYST VIEW ---- #}
 <section class="card">
-  <h2>▣ Analyst View</h2>
-  <form method="POST" action="{{ url_for('analyst_add', cid=case.id) }}">
-    {{ analyst_form.hidden_tag() }}
+  <h2>Case settings</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Case name</label>{{ form.title() }}
+    <label>Who/what is this about?</label>{{ form.subject() }}
+    <label>Notes</label>{{ form.notes(rows=3) }}
     <div class="row">
-      <div><label>Category</label>{{ analyst_form.category() }}</div>
-      <div style="grid-column:span 2"><label>Title</label>{{ analyst_form.title() }}</div>
+      <div><label>Status</label>{{ form.status() }}</div>
+      <div><label>Priority</label>{{ form.priority() }}</div>
+      <div><label>Reminder date</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}</div>
     </div>
-    <label>Body</label>{{ analyst_form.body(rows=3, placeholder="Reasoning, caveats, references to intel item IDs.") }}
-    <label>Linked Intel IDs (comma separated)</label>{{ analyst_form.linked_intel_ids(placeholder="e.g. 4,7,12") }}
-    <button class="primary">Save Analyst Note</button>
+    <button class="primary">Save</button>
   </form>
-
-  {% for cat, items in analyst_buckets.items() %}
-    {% if items %}
-    <h3 style="color:var(--amber);margin-top:16px;font-size:12px;letter-spacing:2px;">{{ cat }} · {{ items|length }}</h3>
-    <ul class="list">
-      {% for a in items %}
-      <li style="flex-direction:column;align-items:flex-start;">
-        <div style="width:100%">
-          <b style="color:var(--amber)">{{ a.title }}</b>
-          <span class="dim"> · {{ a.created_at.strftime('%Y-%m-%d %H:%M') }} · by {{ a.created_by }}</span>
-        </div>
-        <div style="width:100%;white-space:pre-wrap;">{{ a.body }}</div>
-        {% if a.linked_intel_ids %}<div class="dim" style="width:100%">Linked intel: {{ a.linked_intel_ids }}</div>{% endif %}
-        <form method="POST" action="{{ url_for('analyst_delete', aid=a.id) }}"
-              onsubmit="return confirm('Delete note?');" style="margin-left:auto;">
-          <button class="danger-btn">✕</button>
-        </form>
-      </li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-  {% endfor %}
 </section>
 
+<section class="card">
+  <h2>Export</h2>
+  <p class="dim">Download an encrypted PDF of this case. You'll be asked for a password — use the same one in Mpcipher to open it.</p>
+  <form method="POST" action="{{ url_for('case_report', cid=case.id) }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="password" name="password" placeholder="Password (min 6)" required minlength="6">
+    <button class="primary">Download encrypted PDF</button>
+  </form>
+</section>
+
+<form method="POST" action="{{ url_for('case_delete', cid=case.id) }}"
+      onsubmit="return confirm('Delete this whole case? All updates will be removed.');">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="danger-btn" style="width:100%">Delete case</button>
+</form>
+
+<script>
+(function(){
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  document.querySelectorAll('.whenField').forEach(el => {
+    el.value = now.toISOString().slice(0,16);
+  });
+})();
+</script>
 {% endblock %}

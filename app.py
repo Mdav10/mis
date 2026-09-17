@@ -1,5 +1,6 @@
 # ============================================================
-# MIS v2 — Case-Centric Intelligence Platform (auto-migrating)
+# MIS v3 — Plain English Case Tracker
+# Quick-Add everywhere · Native phone gallery · Simple labels
 # ============================================================
 
 import os
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta
 
 from flask import (
     Flask, render_template, redirect, url_for, request,
-    flash, send_file, abort, jsonify
+    flash, send_file, abort, jsonify, g
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -21,7 +22,7 @@ from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
 from wtforms import (
     StringField, PasswordField, TextAreaField, SelectField,
-    BooleanField, SubmitField, IntegerField, DateTimeField
+    BooleanField, SubmitField, DateTimeField
 )
 from wtforms.validators import DataRequired, Length, EqualTo, Optional
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -45,24 +46,20 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 # CONFIG
 # ============================================================
 load_dotenv()
-
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
 
-    _db = os.getenv(
-        "DATABASE_URL",
-        f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}"
-    )
+    _db = os.getenv("DATABASE_URL",
+                    f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
     if _db.startswith("postgres://"):
         _db = _db.replace("postgres://", "postgresql://", 1)
 
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
-
     WTF_CSRF_TIME_LIMIT = None
     MAX_CONTENT_LENGTH = 60 * 1024 * 1024
 
@@ -77,81 +74,6 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Please log in."
-
-
-# ============================================================
-# CONSTANTS
-# ============================================================
-CLEARANCE_LEVELS = [
-    ("CONFIDENTIAL", "CONFIDENTIAL"),
-    ("SECRET", "SECRET"),
-    ("TOP_SECRET", "TOP SECRET"),
-    ("EYES_ONLY", "EYES ONLY"),
-]
-
-CLASSIFICATIONS = [
-    ("UNCLASSIFIED", "UNCLASSIFIED"),
-    ("CONFIDENTIAL", "CONFIDENTIAL"),
-    ("SECRET", "SECRET"),
-    ("TOP_SECRET", "TOP SECRET"),
-]
-
-THREAT_LEVELS = [
-    ("LOW", "LOW"), ("MEDIUM", "MEDIUM"),
-    ("HIGH", "HIGH"), ("CRITICAL", "CRITICAL"),
-]
-
-SOURCE_RELIABILITY = [
-    ("A", "A — Completely reliable"), ("B", "B — Usually reliable"),
-    ("C", "C — Fairly reliable"), ("D", "D — Not usually reliable"),
-    ("E", "E — Unreliable"), ("F", "F — Cannot be judged"),
-]
-
-INFO_CONFIDENCE = [
-    ("1", "1 — Confirmed"), ("2", "2 — Probably true"),
-    ("3", "3 — Possibly true"), ("4", "4 — Doubtful"),
-    ("5", "5 — Improbable"), ("6", "6 — Cannot be judged"),
-]
-
-INTEL_STATUS = [
-    ("UNVERIFIED", "UNVERIFIED"), ("CORROBORATED", "CORROBORATED"),
-    ("VERIFIED", "VERIFIED"), ("DISPUTED", "DISPUTED"), ("FALSE", "FALSE"),
-]
-
-INTEL_CATEGORIES = [
-    ("OBSERVATION", "OBSERVATION"), ("SOURCE_REPORT", "SOURCE REPORT"),
-    ("DOCUMENT", "DOCUMENT"), ("IMAGE_ANALYSIS", "IMAGE ANALYSIS"),
-    ("AUDIO_ANALYSIS", "AUDIO ANALYSIS"), ("MEETING", "MEETING"),
-    ("MOVEMENT", "MOVEMENT"), ("COMMUNICATION", "COMMUNICATION"),
-    ("OTHER", "OTHER"),
-]
-
-ANALYST_CATEGORIES = [
-    ("FACT", "FACT"), ("CLAIM", "CLAIM"), ("CORROBORATED", "CORROBORATED"),
-    ("UNVERIFIED", "UNVERIFIED"), ("ASSESSMENT", "ANALYTIC ASSESSMENT"),
-    ("QUESTION", "OPEN QUESTION"), ("CONTRADICTION", "CONTRADICTION"),
-]
-
-RELATION_TYPES = [
-    ("associated_with", "associated with"), ("family_of", "family of"),
-    ("works_for", "works for"), ("member_of", "member of"),
-    ("owns", "owns"), ("located_at", "located at"),
-    ("met_with", "met with"), ("communicated_with", "communicated with"),
-    ("seen_with", "seen with"), ("suspects", "suspected of involvement with"),
-    ("witness_of", "witness of"), ("other", "other"),
-]
-
-REGIONS = [
-    ("—", 0, 0),
-    ("Kampala, UG", 0.3476, 32.5825), ("Nairobi, KE", -1.2921, 36.8219),
-    ("Dar es Salaam, TZ", -6.7924, 39.2083), ("Kigali, RW", -1.9441, 30.0619),
-    ("Addis Ababa, ET", 9.0300, 38.7400), ("Cairo, EG", 30.0444, 31.2357),
-    ("Lagos, NG", 6.5244, 3.3792), ("Johannesburg, ZA", -26.2041, 28.0473),
-    ("London, UK", 51.5074, -0.1278), ("Dubai, AE", 25.2048, 55.2708),
-    ("Washington DC, US", 38.9072, -77.0369),
-    ("Langley, US (CIA)", 38.9517, -77.1467),
-]
-REGION_MAP = {name: (lat, lng) for (name, lat, lng) in REGIONS}
 
 
 # ============================================================
@@ -183,16 +105,22 @@ class Case(db.Model):
     __tablename__ = "mis_cases"
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
+    subject = db.Column(db.String(200), default="")
+    notes = db.Column(db.Text, default="")
     objective = db.Column(db.Text, default="")
+    legal_note = db.Column(db.Text, default="")
     status = db.Column(db.String(40), default="Active")
     classification = db.Column(db.String(40), default="SECRET")
     threat_level = db.Column(db.String(20), default="MEDIUM")
     priority = db.Column(db.Integer, default=3)
     due_date = db.Column(db.DateTime, nullable=True)
-    subject = db.Column(db.String(200), default="")
-    legal_note = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    updates = db.relationship(
+        "Update", backref="case", lazy=True,
+        cascade="all, delete-orphan",
+        order_by="Update.happened_at.desc()"
+    )
     timeline = db.relationship("TimelineEntry", backref="case", lazy=True,
                                cascade="all, delete-orphan")
     intel = db.relationship("IntelItem", backref="case", lazy=True,
@@ -203,6 +131,34 @@ class Case(db.Model):
                             cascade="all, delete-orphan")
     analyst = db.relationship("AnalystNote", backref="case", lazy=True,
                               cascade="all, delete-orphan")
+
+
+class Update(db.Model):
+    """A single piece of news you learned about a case."""
+    __tablename__ = "mis_updates"
+    id = db.Column(db.Integer, primary_key=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
+    body = db.Column(db.Text, default="")
+    happened_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by = db.Column(db.String(80), default="system")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    photos = db.relationship("UpdateMedia", backref="update", lazy=True,
+                             cascade="all, delete-orphan",
+                             order_by="UpdateMedia.id")
+
+
+class UpdateMedia(db.Model):
+    """Photo/voice attached to a news update."""
+    __tablename__ = "mis_update_media"
+    id = db.Column(db.Integer, primary_key=True)
+    update_id = db.Column(db.Integer, db.ForeignKey("mis_updates.id"), nullable=False)
+    kind = db.Column(db.String(20), default="photo")  # photo | voice | file
+    filename = db.Column(db.String(255))
+    mimetype = db.Column(db.String(120), default="application/octet-stream")
+    data = db.Column(db.LargeBinary)
+    sha256 = db.Column(db.String(64))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Entity(db.Model):
@@ -218,18 +174,13 @@ class Entity(db.Model):
     longitude = db.Column(db.Float, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    outgoing = db.relationship("Relationship", foreign_keys="Relationship.from_id",
-                               backref="from_entity", lazy=True, cascade="all, delete-orphan")
-    incoming = db.relationship("Relationship", foreign_keys="Relationship.to_id",
-                               backref="to_entity", lazy=True, cascade="all, delete-orphan")
-
 
 class CaseEntity(db.Model):
     __tablename__ = "mis_case_entities"
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
-    role = db.Column(db.String(80), default="POI")
+    role = db.Column(db.String(80), default="Person")
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     entity = db.relationship("Entity")
 
@@ -239,11 +190,14 @@ class Relationship(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     from_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
     to_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
-    relation = db.Column(db.String(80), default="associated_with")
+    relation = db.Column(db.String(80), default="knows")
     description = db.Column(db.Text, default="")
     status = db.Column(db.String(20), default="UNVERIFIED")
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    from_entity = db.relationship("Entity", foreign_keys=[from_id], backref="outgoing")
+    to_entity = db.relationship("Entity", foreign_keys=[to_id], backref="incoming")
 
 
 class Source(db.Model):
@@ -269,9 +223,6 @@ class TimelineEntry(db.Model):
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    intel = db.relationship("IntelItem", backref="timeline_entry", lazy=True)
-    media = db.relationship("MediaItem", backref="timeline_entry", lazy=True)
-
 
 class IntelItem(db.Model):
     __tablename__ = "mis_intel"
@@ -279,22 +230,18 @@ class IntelItem(db.Model):
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
     source_id = db.Column(db.Integer, db.ForeignKey("mis_sources.id"), nullable=True)
-
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
     category = db.Column(db.String(40), default="OBSERVATION")
     classification = db.Column(db.String(40), default="SECRET")
-
     source_reliability = db.Column(db.String(2), default="F")
     info_confidence = db.Column(db.String(2), default="6")
     status = db.Column(db.String(20), default="UNVERIFIED")
     is_fact = db.Column(db.Boolean, default=False)
     is_claim = db.Column(db.Boolean, default=False)
-
     analyst_comment = db.Column(db.Text, default="")
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
     source = db.relationship("Source")
 
 
@@ -303,7 +250,6 @@ class MediaItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
-
     title = db.Column(db.String(200), nullable=False)
     kind = db.Column(db.String(20), default="IMAGE")
     filename = db.Column(db.String(255))
@@ -311,19 +257,14 @@ class MediaItem(db.Model):
     description = db.Column(db.Text, default="")
     source_notes = db.Column(db.Text, default="")
     classification = db.Column(db.String(40), default="SECRET")
-
     is_original = db.Column(db.Boolean, default=True)
     parent_id = db.Column(db.Integer, db.ForeignKey("mis_media.id"), nullable=True)
     derived_note = db.Column(db.Text, default="")
-
     data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64), index=True)
     encrypted = db.Column(db.Boolean, default=False)
-
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    parent = db.relationship("MediaItem", remote_side=[id], backref="derivatives")
 
 
 class AnalystNote(db.Model):
@@ -355,7 +296,7 @@ class DeadDrop(db.Model):
     @property
     def countdown(self):
         if self.is_unlocked:
-            return "UNLOCKED"
+            return "OPEN"
         d = self.unlock_at - datetime.utcnow()
         return f"{d.days}d {d.seconds//3600:02d}:{(d.seconds%3600)//60:02d}:{d.seconds%60:02d}"
 
@@ -383,7 +324,7 @@ def load_user(uid):
 
 
 # ============================================================
-# AUTO-MIGRATION — add missing columns to existing tables
+# AUTO-MIGRATION
 # ============================================================
 MIGRATIONS = {
     "mis_users": [
@@ -392,6 +333,7 @@ MIGRATIONS = {
     ],
     "mis_cases": [
         ("subject", "VARCHAR(200) DEFAULT ''"),
+        ("notes", "TEXT DEFAULT ''"),
         ("legal_note", "TEXT DEFAULT ''"),
         ("threat_level", "VARCHAR(20) DEFAULT 'MEDIUM'"),
         ("classification", "VARCHAR(40) DEFAULT 'SECRET'"),
@@ -404,8 +346,6 @@ MIGRATIONS = {
         ("latitude", "DOUBLE PRECISION DEFAULT 0"),
         ("longitude", "DOUBLE PRECISION DEFAULT 0"),
     ],
-    "mis_notes": [],
-    "mis_evidence": [],
     "mis_intel": [
         ("timeline_id", "INTEGER"),
         ("source_id", "INTEGER"),
@@ -456,29 +396,25 @@ MIGRATIONS = {
         ("case_id", "INTEGER"),
     ],
     "mis_case_entities": [
-        ("role", "VARCHAR(80) DEFAULT 'POI'"),
+        ("role", "VARCHAR(80) DEFAULT 'Person'"),
     ],
 }
 
 
 def auto_migrate():
-    """Add any missing columns to existing tables. Idempotent."""
-    is_postgres = db.engine.dialect.name == "postgresql"
     insp = inspect(db.engine)
     existing_tables = set(insp.get_table_names())
-
     for table, cols in MIGRATIONS.items():
         if table not in existing_tables:
-            continue  # new table will be created by db.create_all()
+            continue
         existing_cols = {c["name"] for c in insp.get_columns(table)}
         for col_name, col_type in cols:
             if col_name in existing_cols:
                 continue
-            sql = f'ALTER TABLE {table} ADD COLUMN {col_name} {col_type}'
             try:
                 with db.engine.begin() as conn:
-                    conn.execute(text(sql))
-                print(f"🛠  Migrated: {table}.{col_name} {col_type}")
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {col_name} {col_type}'))
+                print(f"🛠  Migrated: {table}.{col_name}")
             except Exception as e:
                 print(f"⚠️  Migration failed {table}.{col_name}: {e}")
 
@@ -487,166 +423,112 @@ def auto_migrate():
 # FORMS
 # ============================================================
 class LoginForm(FlaskForm):
-    username = StringField("Agent ID", validators=[DataRequired(), Length(1, 80)])
-    password = PasswordField("Passphrase", validators=[DataRequired()])
-    submit = SubmitField("Access")
+    username = StringField("Username", validators=[DataRequired(), Length(1, 80)])
+    password = PasswordField("Password", validators=[DataRequired()])
+    submit = SubmitField("Log In")
 
 
 class ChangePasswordForm(FlaskForm):
-    current = PasswordField("Current Passphrase", validators=[DataRequired()])
-    new = PasswordField("New Passphrase", validators=[DataRequired(), Length(min=10)])
+    current = PasswordField("Current Password", validators=[DataRequired()])
+    new = PasswordField("New Password", validators=[DataRequired(), Length(min=10)])
     confirm = PasswordField("Confirm", validators=[DataRequired(), EqualTo("new")])
-    submit = SubmitField("Rotate")
+    submit = SubmitField("Update Password")
 
 
-class AgentForm(FlaskForm):
-    username = StringField("Agent ID", validators=[DataRequired(), Length(3, 80)])
-    password = PasswordField("Passphrase", validators=[DataRequired(), Length(min=8)])
-    codename = StringField("Codename", validators=[Optional(), Length(0, 80)])
-    clearance = SelectField("Clearance", choices=CLEARANCE_LEVELS)
-    submit = SubmitField("Register Agent")
+class UserForm(FlaskForm):
+    username = StringField("Username", validators=[DataRequired(), Length(3, 80)])
+    password = PasswordField("Password", validators=[DataRequired(), Length(min=8)])
+    codename = StringField("Display name", validators=[Optional(), Length(0, 80)])
+    clearance = SelectField("Role", choices=[
+        ("SECRET", "User"), ("TOP_SECRET", "Manager"), ("EYES_ONLY", "Admin")
+    ])
+    submit = SubmitField("Create User")
 
 
 class CaseForm(FlaskForm):
-    title = StringField("Case Title", validators=[DataRequired(), Length(1, 200)])
-    subject = StringField("Subject", validators=[Optional(), Length(0, 200)])
-    objective = TextAreaField("Objective")
-    legal_note = TextAreaField("Purpose / Authority / Legal Basis")
+    title = StringField("Case name", validators=[DataRequired(), Length(1, 200)])
+    subject = StringField("Who/what is this about?", validators=[Optional(), Length(0, 200)])
+    notes = TextAreaField("Notes")
     status = SelectField("Status", choices=[
-        ("Active", "Active"), ("Review", "Review"),
+        ("Active", "Active"), ("Paused", "Paused"),
         ("Closed", "Closed"), ("Archived", "Archived")
     ])
-    classification = SelectField("Classification", choices=CLASSIFICATIONS)
-    threat_level = SelectField("Threat Level", choices=THREAT_LEVELS)
     priority = SelectField("Priority", coerce=int, choices=[
-        (1, "1 — CRITICAL"), (2, "2 — HIGH"), (3, "3 — MEDIUM"), (4, "4 — LOW")
+        (1, "1 — Very important"), (2, "2 — Important"),
+        (3, "3 — Normal"), (4, "4 — Low")
     ])
-    due_date = DateTimeField("Due (YYYY-MM-DD HH:MM)", format="%Y-%m-%d %H:%M", validators=[Optional()])
+    due_date = DateTimeField("Reminder date (optional) — YYYY-MM-DD HH:MM",
+                             format="%Y-%m-%d %H:%M", validators=[Optional()])
     submit = SubmitField("Save")
 
 
-class TimelineForm(FlaskForm):
-    title = StringField("Title", validators=[DataRequired(), Length(1, 200)])
-    description = TextAreaField("Description")
-    event_at = DateTimeField("Event Date/Time (YYYY-MM-DD HH:MM)",
-                             format="%Y-%m-%d %H:%M", validators=[DataRequired()])
-    category = SelectField("Category", choices=INTEL_CATEGORIES)
-    classification = SelectField("Classification", choices=CLASSIFICATIONS)
-    submit = SubmitField("Add to Timeline")
+class QuickAddForm(FlaskForm):
+    """The one box."""
+    body = TextAreaField("What did you learn?", validators=[Optional()])
+    case_id = SelectField("About", coerce=int, validators=[DataRequired()])
+    happened_at = DateTimeField("When", format="%Y-%m-%d %H:%M", validators=[Optional()])
+    photos = FileField("Photos")
+    voice = FileField("Voice")
+    submit = SubmitField("Save")
 
 
-class IntelForm(FlaskForm):
-    title = StringField("Title", validators=[DataRequired(), Length(1, 200)])
-    body = TextAreaField("Statement", validators=[DataRequired()])
-    category = SelectField("Category", choices=INTEL_CATEGORIES)
-    classification = SelectField("Classification", choices=CLASSIFICATIONS)
-    source_id = SelectField("Source", coerce=int, validators=[Optional()])
-    source_reliability = SelectField("Source Reliability", choices=SOURCE_RELIABILITY)
-    info_confidence = SelectField("Information Confidence", choices=INFO_CONFIDENCE)
-    status = SelectField("Status", choices=INTEL_STATUS)
-    is_fact = BooleanField("Mark as FACT")
-    is_claim = BooleanField("Mark as CLAIM")
-    analyst_comment = TextAreaField("Analyst Comment")
-    timeline_id = SelectField("Attach to Timeline Entry", coerce=int, validators=[Optional()])
-    submit = SubmitField("File Intel")
+class UpdateForm(FlaskForm):
+    body = TextAreaField("What did you learn?", validators=[Optional()])
+    happened_at = DateTimeField("When", format="%Y-%m-%d %H:%M", validators=[DataRequired()])
+    photos = FileField("Add photos")
+    voice = FileField("Add voice")
+    submit = SubmitField("Save Changes")
 
 
 class EntityForm(FlaskForm):
-    name = StringField("Name / Codename", validators=[DataRequired(), Length(1, 200)])
+    name = StringField("Name", validators=[DataRequired(), Length(1, 200)])
     type = SelectField("Type", choices=[
-        ("Person", "Person"), ("Organization", "Organization"), ("Company", "Company"),
-        ("Location", "Location"), ("Vehicle", "Vehicle"), ("Event", "Event"),
-        ("Project", "Project"), ("Website", "Website")
+        ("Person", "Person"), ("Place", "Place"), ("Organisation", "Organisation"),
+        ("Vehicle", "Vehicle"), ("Event", "Event"), ("Other", "Other")
     ])
     notes = TextAreaField("Notes")
-    verified = BooleanField("Verified")
-    threat_level = SelectField("Threat Level", choices=THREAT_LEVELS)
-    region = SelectField("Region", choices=[(r[0], r[0]) for r in REGIONS])
-    submit = SubmitField("Save Entity")
-
-
-class CaseEntityForm(FlaskForm):
-    entity_id = SelectField("Entity", coerce=int, validators=[DataRequired()])
-    role = SelectField("Role", choices=[
-        ("POI", "POI"), ("SUSPECT", "SUSPECT"), ("WITNESS", "WITNESS"),
-        ("SOURCE", "SOURCE"), ("VICTIM", "VICTIM"), ("ASSOCIATE", "ASSOCIATE"),
-        ("FAMILY", "FAMILY"), ("OTHER", "OTHER")
-    ])
-    submit = SubmitField("Attach to Case")
+    region = StringField("Region (optional)", validators=[Optional(), Length(0, 120)])
+    submit = SubmitField("Save")
 
 
 class RelationshipForm(FlaskForm):
     from_id = SelectField("From", coerce=int, validators=[DataRequired()])
     to_id = SelectField("To", coerce=int, validators=[DataRequired()])
-    relation = SelectField("Relation", choices=RELATION_TYPES)
-    description = TextAreaField("Description")
-    status = SelectField("Status", choices=INTEL_STATUS)
-    submit = SubmitField("Create Relationship")
+    relation = SelectField("How they are connected", choices=[
+        ("knows", "knows"), ("family of", "family of"), ("works for", "works for"),
+        ("member of", "member of"), ("owns", "owns"), ("lives at", "lives at"),
+        ("met with", "met with"), ("communicates with", "communicates with"),
+        ("seen with", "seen with"), ("other", "other"),
+    ])
+    description = TextAreaField("Details")
+    submit = SubmitField("Save")
 
 
 class SourceForm(FlaskForm):
-    handle = StringField("Source Handle", validators=[DataRequired(), Length(1, 120)])
-    description = TextAreaField("Description")
-    reliability = SelectField("Reliability", choices=SOURCE_RELIABILITY)
-    contact_notes = TextAreaField("Contact Notes")
-    submit = SubmitField("Save Source")
-
-
-class MediaForm(FlaskForm):
-    title = StringField("Title", validators=[DataRequired(), Length(1, 200)])
-    kind = SelectField("Kind", choices=[
-        ("IMAGE", "IMAGE"), ("AUDIO", "AUDIO"),
-        ("VIDEO", "VIDEO"), ("DOCUMENT", "DOCUMENT")
-    ])
-    file = FileField("File", validators=[FileRequired()])
-    description = TextAreaField("Description")
-    source_notes = TextAreaField("Source / Provenance")
-    classification = SelectField("Classification", choices=CLASSIFICATIONS)
-    encrypt = BooleanField("Encrypt at rest")
-    passphrase = PasswordField("Encryption Passphrase")
-    parent_id = SelectField("Derived from (original)", coerce=int, validators=[Optional()])
-    derived_note = StringField("Derivation note")
-    timeline_id = SelectField("Attach to Timeline Entry", coerce=int, validators=[Optional()])
-    submit = SubmitField("Secure Media")
-
-
-class AnalystForm(FlaskForm):
-    category = SelectField("Category", choices=ANALYST_CATEGORIES)
-    title = StringField("Title", validators=[DataRequired(), Length(1, 200)])
-    body = TextAreaField("Body", validators=[DataRequired()])
-    linked_intel_ids = StringField("Linked Intel IDs (comma separated)")
-    submit = SubmitField("Save Analyst Note")
+    handle = StringField("Contact name", validators=[DataRequired(), Length(1, 120)])
+    description = TextAreaField("Who is this?")
+    submit = SubmitField("Save")
 
 
 class DeadDropForm(FlaskForm):
     title = StringField("Title", validators=[DataRequired(), Length(1, 200)])
-    body = TextAreaField("Body", validators=[DataRequired()])
-    unlock_at = DateTimeField("Unlock At (YYYY-MM-DD HH:MM)",
+    body = TextAreaField("Message", validators=[DataRequired()])
+    unlock_at = DateTimeField("Open on — YYYY-MM-DD HH:MM",
                               format="%Y-%m-%d %H:%M", validators=[DataRequired()])
-    classification = SelectField("Classification", choices=CLASSIFICATIONS)
-    submit = SubmitField("Seal Dead Drop")
+    submit = SubmitField("Lock it")
 
 
 class ReportForm(FlaskForm):
-    password = PasswordField("Encryption Password", validators=[DataRequired(), Length(min=6)])
-    submit = SubmitField("Download Encrypted PDF")
+    password = PasswordField("Encryption password", validators=[DataRequired(), Length(min=6)])
+    submit = SubmitField("Download encrypted PDF")
 
 
 # ============================================================
 # HELPERS
 # ============================================================
-def case_choices():
-    rows = db.session.execute(db.select(Case).order_by(Case.id)).scalars().all()
-    return [(0, "— none —")] + [(c.id, f"OP-{c.id:04d} {c.title}") for c in rows]
-
-
-def timeline_choices(case_id=None):
-    q = db.select(TimelineEntry)
-    if case_id:
-        q = q.where(TimelineEntry.case_id == case_id)
-    q = q.order_by(TimelineEntry.event_at.desc())
-    rows = db.session.execute(q).scalars().all()
-    return [(0, "— none —")] + [(t.id, f"{t.event_at.strftime('%Y-%m-%d %H:%M')} · {t.title}") for t in rows]
+def case_choices(current_user_cases=None):
+    rows = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
+    return [(c.id, c.title) for c in rows]
 
 
 def entity_choices():
@@ -654,32 +536,110 @@ def entity_choices():
     return [(e.id, f"{e.name} ({e.type})") for e in rows]
 
 
-def source_choices():
-    rows = db.session.execute(db.select(Source).order_by(Source.handle)).scalars().all()
-    return [(0, "— none —")] + [(s.id, f"{s.handle} [{s.reliability}]") for s in rows]
-
-
-def media_choices(case_id=None):
-    q = db.select(MediaItem)
-    if case_id:
-        q = q.where(MediaItem.case_id == case_id)
-    rows = db.session.execute(q.order_by(MediaItem.id)).scalars().all()
-    return [(0, "— none —")] + [(m.id, f"#{m.id} {m.title}") for m in rows]
-
-
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def threat_color(level):
-    return {
-        "LOW": "#3fb950", "MEDIUM": "#ffb000",
-        "HIGH": "#ff7b00", "CRITICAL": "#ff3b30",
-    }.get((level or "").upper(), "#8a8577")
+def parse_dt(s):
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s.strip(), "%Y-%m-%d %H:%M")
+    except Exception:
+        try:
+            return datetime.strptime(s.strip(), "%Y-%m-%dT%H:%M")
+        except Exception:
+            return None
 
 
 # ============================================================
-# MPC ENCRYPTION
+# PDF BUILDER
+# ============================================================
+def build_case_pdf(case: Case) -> bytes:
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+                            topMargin=1.8 * cm, bottomMargin=1.8 * cm,
+                            title=f"MIS Report — {case.title}")
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#1f3a8a"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a8a"))
+    body = styles["BodyText"]
+
+    story = []
+    story.append(Paragraph("MIS CASE FILE", h1))
+    story.append(Paragraph(case.title, h2))
+    if case.subject:
+        story.append(Paragraph(f"About: {case.subject}", body))
+    story.append(Paragraph(f"Status: {case.status}", body))
+    story.append(Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", body))
+    story.append(Spacer(1, 0.4 * cm))
+
+    if case.notes:
+        story.append(Paragraph("Notes", h2))
+        story.append(Paragraph((case.notes or "").replace("\n", "<br/>"), body))
+        story.append(Spacer(1, 0.3 * cm))
+
+    story.append(Paragraph("History", h2))
+    updates = sorted(case.updates, key=lambda u: u.happened_at, reverse=True)
+    if updates:
+        for u in updates:
+            story.append(Paragraph(u.happened_at.strftime("%Y-%m-%d %H:%M"), h2))
+            if u.body:
+                story.append(Paragraph(u.body.replace("\n", "<br/>"), body))
+            for p in u.photos:
+                story.append(Paragraph(f"[{p.kind.upper()}] {p.filename} · sha256 {(p.sha256 or '')[:16]}…", body))
+            story.append(Spacer(1, 0.2 * cm))
+    else:
+        story.append(Paragraph("— none —", body))
+
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph("People & Places on this case", h2))
+    if case.links:
+        for link in case.links:
+            story.append(Paragraph(f"<b>{link.entity.name}</b> ({link.entity.type})", body))
+    else:
+        story.append(Paragraph("— none —", body))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def build_briefing_pdf(days: int = 1) -> bytes:
+    since = datetime.utcnow() - timedelta(days=days)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+                            topMargin=1.8 * cm, bottomMargin=1.8 * cm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#1f3a8a"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a8a"))
+    body = styles["BodyText"]
+
+    story = [Paragraph("MIS BRIEFING", h1),
+             Paragraph(f"Last {days} day(s) · {datetime.utcnow().isoformat()}Z", body),
+             Spacer(1, 0.4 * cm)]
+
+    ups = db.session.execute(
+        db.select(Update).where(Update.happened_at >= since)
+        .order_by(Update.happened_at.desc())
+    ).scalars().all()
+    story.append(Paragraph(f"News ({len(ups)})", h2))
+    for u in ups:
+        c = db.session.get(Case, u.case_id)
+        story.append(Paragraph(
+            f"<b>{u.happened_at.strftime('%Y-%m-%d %H:%M')} · {c.title if c else '—'}</b>", body))
+        story.append(Paragraph((u.body or "").replace("\n", "<br/>"), body))
+        for p in u.photos:
+            story.append(Paragraph(f"[{p.kind.upper()}] {p.filename}", body))
+        story.append(Spacer(1, 0.15 * cm))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ============================================================
+# ENCRYPTION
 # ============================================================
 MPC_MAGIC = b"MIS1"
 PBKDF2_ITERATIONS = 200_000
@@ -700,152 +660,6 @@ def mpc_encrypt(plaintext: bytes, password: str) -> bytes:
     return MPC_MAGIC + salt + nonce + ct
 
 
-def mpc_decrypt(blob: bytes, password: str) -> bytes:
-    if blob[:4] != MPC_MAGIC:
-        raise ValueError("Not an MIS-encrypted payload")
-    salt, nonce, ct = blob[4:20], blob[20:32], blob[32:]
-    key = derive_key(password, salt)
-    return AESGCM(key).decrypt(nonce, ct, associated_data=MPC_MAGIC)
-
-
-# ============================================================
-# PDFs
-# ============================================================
-def build_case_pdf(case: Case) -> bytes:
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
-                            topMargin=1.8 * cm, bottomMargin=1.8 * cm,
-                            title=f"MIS Report — OP-{case.id:04d}")
-    styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#1f3a8a"))
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a8a"))
-    h3 = ParagraphStyle("h3", parent=styles["Heading3"], textColor=colors.HexColor("#333"))
-    body = styles["BodyText"]
-
-    story = []
-    story.append(Paragraph("MIS CASE FILE", h1))
-    story.append(Paragraph("Mugisha's Intelligence System", styles["Italic"]))
-    story.append(Spacer(1, 0.4 * cm))
-    story.append(Paragraph(f"OP-{case.id:04d} — {case.title}", h2))
-    story.append(Paragraph(f"Subject: {case.subject or '—'}", body))
-    story.append(Paragraph(f"Status: {case.status} · Class: {case.classification} · Threat: {case.threat_level} · Priority: {case.priority}", body))
-    if case.due_date:
-        story.append(Paragraph(f"Due: {case.due_date.isoformat()}", body))
-    story.append(Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", body))
-    story.append(Spacer(1, 0.3 * cm))
-
-    story.append(Paragraph("Purpose / Legal Basis", h2))
-    story.append(Paragraph(case.legal_note or "Documentation of observations and information for lawful hand-over.", body))
-    story.append(Spacer(1, 0.3 * cm))
-
-    story.append(Paragraph("Objective", h2))
-    story.append(Paragraph(case.objective or "—", body))
-    story.append(Spacer(1, 0.3 * cm))
-
-    story.append(Paragraph("Timeline", h2))
-    if case.timeline:
-        for t in sorted(case.timeline, key=lambda x: x.event_at):
-            story.append(Paragraph(
-                f"<b>{t.event_at.strftime('%Y-%m-%d %H:%M')}</b> · {t.category} · {t.classification}<br><b>{t.title}</b>", h3))
-            if t.description:
-                story.append(Paragraph(t.description.replace("\n", "<br/>"), body))
-            for i in t.intel:
-                story.append(Paragraph(
-                    f"  ↳ INTEL: {i.title} · Src {i.source_reliability}{i.info_confidence} · {i.status}", body))
-            for m in t.media:
-                story.append(Paragraph(
-                    f"  ↳ MEDIA: {m.title} ({m.kind}) sha256 {m.sha256[:16]}… {'(enc)' if m.encrypted else ''}", body))
-            story.append(Spacer(1, 0.2 * cm))
-    else:
-        story.append(Paragraph("— none —", body))
-    story.append(Spacer(1, 0.3 * cm))
-
-    story.append(PageBreak())
-    story.append(Paragraph("Analyst View", h2))
-    for cat, _label in ANALYST_CATEGORIES:
-        items = [a for a in case.analyst if a.category == cat]
-        if not items:
-            continue
-        story.append(Paragraph(cat, h3))
-        for a in items:
-            story.append(Paragraph(f"<b>{a.title}</b>", body))
-            story.append(Paragraph(a.body.replace("\n", "<br/>"), body))
-            story.append(Spacer(1, 0.15 * cm))
-
-    story.append(PageBreak())
-    story.append(Paragraph("Evidence Register", h2))
-    if case.media:
-        data = [["ID", "Title", "Kind", "Class", "SHA-256", "Enc"]]
-        for m in case.media:
-            data.append([str(m.id), m.title[:24], m.kind, m.classification,
-                         (m.sha256 or "")[:16] + "…", "Y" if m.encrypted else "N"])
-        t = Table(data, colWidths=[1 * cm, 5 * cm, 1.8 * cm, 2 * cm, 4.5 * cm, 1 * cm])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f3a8a")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
-        ]))
-        story.append(t)
-    else:
-        story.append(Paragraph("— none —", body))
-
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("Entities", h2))
-    for link in case.links:
-        e = link.entity
-        story.append(Paragraph(
-            f"<b>{e.name}</b> ({e.type}) · Role: {link.role} · Threat: {e.threat_level} · Region: {e.region or '—'}", body))
-
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("Chain of Custody / Handling Note", h2))
-    story.append(Paragraph(
-        "Compiled from information collected by the operator. "
-        "Sources, reliability, and confidence are marked per item. "
-        "Media preserved with SHA-256 hashes at intake; derived copies are marked as such. "
-        "No confrontation, surveillance, or engagement with subjects is authorised by this document. "
-        "If information suggests imminent risk to life, contact police/emergency channels.", body))
-
-    doc.build(story)
-    return buf.getvalue()
-
-
-def build_briefing_pdf(days: int = 1) -> bytes:
-    since = datetime.utcnow() - timedelta(days=days)
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
-                            topMargin=1.8 * cm, bottomMargin=1.8 * cm)
-    styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#1f3a8a"))
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a8a"))
-    body = styles["BodyText"]
-
-    story = []
-    story.append(Paragraph("MIS DAILY BRIEFING", h1))
-    story.append(Paragraph(f"Window: last {days} day(s) · {datetime.utcnow().isoformat()}Z", body))
-    story.append(Spacer(1, 0.4 * cm))
-
-    cases = db.session.execute(db.select(Case).where(Case.created_at >= since)).scalars().all()
-    story.append(Paragraph(f"Cases Opened ({len(cases)})", h2))
-    for c in cases:
-        story.append(Paragraph(f"OP-{c.id:04d} — {c.title} · Threat {c.threat_level}", body))
-
-    intel = db.session.execute(db.select(IntelItem).where(IntelItem.created_at >= since)).scalars().all()
-    story.append(Paragraph(f"Intel Items ({len(intel)})", h2))
-    for i in intel:
-        story.append(Paragraph(f"• {i.title} · {i.status} · src {i.source_reliability}{i.info_confidence}", body))
-
-    media = db.session.execute(db.select(MediaItem).where(MediaItem.created_at >= since)).scalars().all()
-    story.append(Paragraph(f"Media Secured ({len(media)})", h2))
-    for m in media:
-        story.append(Paragraph(f"• {m.title} ({m.kind}) {(m.sha256 or '')[:16]}…", body))
-
-    doc.build(story)
-    return buf.getvalue()
-
-
 # ============================================================
 # ROUTES — AUTH
 # ============================================================
@@ -861,15 +675,13 @@ def login():
             login_user(user)
             audit("login_success", f"{user.username} logged in", actor=user.username)
             return redirect(url_for("dashboard"))
-        audit("login_fail", f"Attempt for {uname}")
-        flash("Invalid credentials.", "error")
+        flash("Wrong username or password.", "error")
     return render_template("login.html", form=form)
 
 
 @app.route("/logout")
 @login_required
 def logout():
-    audit("logout", current_user.username, actor=current_user.username)
     logout_user()
     return redirect(url_for("login"))
 
@@ -880,46 +692,88 @@ def change_password():
     form = ChangePasswordForm()
     if form.validate_on_submit():
         if not current_user.check_password(form.current.data):
-            flash("Current passphrase incorrect.", "error")
+            flash("Current password is wrong.", "error")
         else:
             current_user.set_password(form.new.data)
             db.session.commit()
-            audit("password_change", current_user.username, actor=current_user.username)
-            flash("Passphrase rotated.", "success")
+            flash("Password changed.", "success")
             return redirect(url_for("dashboard"))
     return render_template("change_password.html", form=form)
 
 
 # ============================================================
-# ROUTES — DASHBOARD
+# ROUTES — HOME (with quick add)
 # ============================================================
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    now = datetime.utcnow()
-    stats = {
-        "cases": db.session.scalar(db.select(db.func.count(Case.id))) or 0,
-        "entities": db.session.scalar(db.select(db.func.count(Entity.id))) or 0,
-        "intel": db.session.scalar(db.select(db.func.count(IntelItem.id))) or 0,
-        "media": db.session.scalar(db.select(db.func.count(MediaItem.id))) or 0,
-        "agents": db.session.scalar(db.select(db.func.count(User.id))) or 0,
-        "drops": db.session.scalar(db.select(db.func.count(DeadDrop.id))) or 0,
-        "timeline": db.session.scalar(db.select(db.func.count(TimelineEntry.id))) or 0,
-        "analyst": db.session.scalar(db.select(db.func.count(AnalystNote.id))) or 0,
-    }
-    threat_ops = db.session.execute(
-        db.select(Case).where(Case.status.in_(["Active", "Review"]))
-        .order_by(Case.priority, Case.due_date.asc().nullslast()).limit(5)
-    ).scalars().all()
+    cases = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
+    # Recent updates feed
     recent = db.session.execute(
-        db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(10)
+        db.select(Update).order_by(Update.happened_at.desc()).limit(20)
     ).scalars().all()
-    drops = db.session.execute(
-        db.select(DeadDrop).where(DeadDrop.unlock_at > now)
-        .order_by(DeadDrop.unlock_at).limit(5)
-    ).scalars().all()
-    return render_template("dashboard.html", stats=stats, recent=recent,
-                           threat_ops=threat_ops, drops=drops)
+    return render_template(
+        "dashboard.html",
+        cases=cases,
+        recent=recent,
+        case_choices=case_choices()
+    )
+
+
+# ============================================================
+# ROUTES — QUICK ADD (the one box)
+# ============================================================
+@app.route("/add", methods=["POST"])
+@login_required
+def quick_add():
+    form = QuickAddForm()
+    form.case_id.choices = case_choices()
+    if not form.case_id.data or form.case_id.data == 0:
+        flash("Please choose which case this is about.", "error")
+        return redirect(request.referrer or url_for("dashboard"))
+
+    body = (form.body.data or "").strip()
+    when = form.happened_at.data or datetime.utcnow()
+
+    # Collect files
+    photos = []
+    if "photos" in request.files:
+        for f in request.files.getlist("photos"):
+            if f and f.filename:
+                photos.append(("photo", f))
+    if "voice" in request.files:
+        f = request.files.get("voice")
+        if f and f.filename:
+            photos.append(("voice", f))
+
+    if not body and not photos:
+        flash("Type something or add a photo/voice.", "error")
+        return redirect(request.referrer or url_for("dashboard"))
+
+    if not body and photos:
+        body = f"[{photos[0][0].capitalize()} added]"
+
+    u = Update(case_id=form.case_id.data, body=body, happened_at=when,
+               created_by=current_user.username)
+    db.session.add(u)
+    db.session.flush()
+
+    for kind, f in photos:
+        raw = f.read()
+        if not raw:
+            continue
+        um = UpdateMedia(
+            update_id=u.id, kind=kind,
+            filename=secure_filename(f.filename),
+            mimetype=f.mimetype or "application/octet-stream",
+            data=raw, sha256=sha256_bytes(raw),
+        )
+        db.session.add(um)
+
+    db.session.commit()
+    audit("update_add", f"Case #{u.case_id}: {body[:40]}", actor=current_user.username)
+    flash("Saved.", "success")
+    return redirect(request.referrer or url_for("dashboard"))
 
 
 # ============================================================
@@ -933,22 +787,17 @@ def cases():
         c = Case(
             title=form.title.data,
             subject=form.subject.data or "",
-            objective=form.objective.data or "",
-            legal_note=form.legal_note.data or "",
+            notes=form.notes.data or "",
             status=form.status.data,
-            classification=form.classification.data,
-            threat_level=form.threat_level.data,
             priority=form.priority.data or 3,
             due_date=form.due_date.data,
         )
         db.session.add(c)
         db.session.commit()
-        audit("case_create", f"OP-{c.id:04d} {c.title}", actor=current_user.username)
-        flash("Case file opened.", "success")
+        audit("case_create", c.title, actor=current_user.username)
+        flash("Case created.", "success")
         return redirect(url_for("case_detail", cid=c.id))
-    rows = db.session.execute(
-        db.select(Case).order_by(Case.priority, Case.created_at.desc())
-    ).scalars().all()
+    rows = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
     return render_template("cases.html", form=form, cases=rows)
 
 
@@ -960,46 +809,26 @@ def case_detail(cid):
     if form.validate_on_submit():
         c.title = form.title.data
         c.subject = form.subject.data or ""
-        c.objective = form.objective.data or ""
-        c.legal_note = form.legal_note.data or ""
+        c.notes = form.notes.data or ""
         c.status = form.status.data
-        c.classification = form.classification.data
-        c.threat_level = form.threat_level.data
         c.priority = form.priority.data or c.priority
         c.due_date = form.due_date.data
         db.session.commit()
-        audit("case_update", f"OP-{c.id:04d}", actor=current_user.username)
         flash("Case updated.", "success")
         return redirect(url_for("case_detail", cid=c.id))
 
-    report_form = ReportForm()
-    timeline_form = TimelineForm()
-    intel_form = IntelForm()
-    media_form = MediaForm()
-    analyst_form = AnalystForm()
+    # entity form for "add person/place"
+    entity_form = EntityForm()
     rel_form = RelationshipForm()
-    case_entity_form = CaseEntityForm()
-    source_form = SourceForm()
-
-    intel_form.source_id.choices = source_choices()
-    intel_form.timeline_id.choices = timeline_choices(c.id)
-    media_form.timeline_id.choices = timeline_choices(c.id)
-    media_form.parent_id.choices = media_choices(c.id)
-    case_entity_form.entity_id.choices = entity_choices()
     rel_form.from_id.choices = entity_choices()
     rel_form.to_id.choices = entity_choices()
 
-    analyst_buckets = {}
-    for cat, _label in ANALYST_CATEGORIES:
-        analyst_buckets[cat] = [a for a in c.analyst if a.category == cat]
-
     return render_template(
-        "case_detail.html", case=c, form=form,
-        report_form=report_form, timeline_form=timeline_form,
-        intel_form=intel_form, media_form=media_form,
-        analyst_form=analyst_form, rel_form=rel_form,
-        case_entity_form=case_entity_form, source_form=source_form,
-        analyst_buckets=analyst_buckets,
+        "case_detail.html",
+        case=c, form=form,
+        entity_form=entity_form,
+        rel_form=rel_form,
+        case_choices=case_choices(),
     )
 
 
@@ -1009,8 +838,7 @@ def case_delete(cid):
     c = db.session.get(Case, cid) or abort(404)
     db.session.delete(c)
     db.session.commit()
-    audit("case_delete", f"OP-{cid:04d}", actor=current_user.username)
-    flash("Case purged.", "success")
+    flash("Case deleted.", "success")
     return redirect(url_for("cases"))
 
 
@@ -1024,215 +852,86 @@ def case_report(cid):
         return redirect(url_for("case_detail", cid=cid))
     pdf_bytes = build_case_pdf(c)
     encrypted = mpc_encrypt(pdf_bytes, form.password.data)
-    audit("report_download", f"OP-{cid:04d}", actor=current_user.username)
-    fname = f"MIS_OP{cid:04d}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.mpcenc"
+    fname = f"MIS_{c.title.replace(' ', '_')}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.mpcenc"
     return send_file(io.BytesIO(encrypted), mimetype="application/octet-stream",
                      as_attachment=True, download_name=fname)
 
 
 # ============================================================
-# ROUTES — TIMELINE
+# ROUTES — UPDATE EDIT / DELETE
 # ============================================================
-@app.route("/cases/<int:cid>/timeline", methods=["POST"])
+@app.route("/updates/<int:uid>/edit", methods=["GET", "POST"])
 @login_required
-def timeline_add(cid):
-    c = db.session.get(Case, cid) or abort(404)
-    form = TimelineForm()
+def update_edit(uid):
+    u = db.session.get(Update, uid) or abort(404)
+    form = UpdateForm(obj=u)
     if form.validate_on_submit():
-        t = TimelineEntry(
-            case_id=c.id, title=form.title.data,
-            description=form.description.data or "",
-            event_at=form.event_at.data, category=form.category.data,
-            classification=form.classification.data,
-            created_by=current_user.username,
-        )
-        db.session.add(t)
+        u.body = (form.body.data or "").strip() or u.body
+        u.happened_at = form.happened_at.data
+        # add new files if any
+        for kind, key in [("photo", "photos"), ("voice", "voice")]:
+            if key in request.files:
+                files = request.files.getlist(key) if key == "photos" else [request.files.get(key)]
+                for f in files:
+                    if f and f.filename:
+                        raw = f.read()
+                        if raw:
+                            db.session.add(UpdateMedia(
+                                update_id=u.id, kind=kind,
+                                filename=secure_filename(f.filename),
+                                mimetype=f.mimetype or "application/octet-stream",
+                                data=raw, sha256=sha256_bytes(raw),
+                            ))
         db.session.commit()
-        audit("timeline_add", f"OP-{cid:04d} {t.title}", actor=current_user.username)
-        flash("Timeline entry added.", "success")
-    else:
-        flash("Invalid timeline entry.", "error")
-    return redirect(url_for("case_detail", cid=cid))
+        flash("Updated.", "success")
+        return redirect(url_for("case_detail", cid=u.case_id))
+    return render_template("update_edit.html", form=form, update=u)
 
 
-@app.route("/timeline/<int:tid>/delete", methods=["POST"])
+@app.route("/updates/<int:uid>/delete", methods=["POST"])
 @login_required
-def timeline_delete(tid):
-    t = db.session.get(TimelineEntry, tid) or abort(404)
-    cid = t.case_id
-    db.session.delete(t)
+def update_delete(uid):
+    u = db.session.get(Update, uid) or abort(404)
+    cid = u.case_id
+    db.session.delete(u)
     db.session.commit()
+    flash("Deleted.", "success")
     return redirect(url_for("case_detail", cid=cid))
 
 
-# ============================================================
-# ROUTES — INTEL
-# ============================================================
-@app.route("/cases/<int:cid>/intel", methods=["POST"])
+@app.route("/updates/<int:uid>/media/<int:mid>/delete", methods=["POST"])
 @login_required
-def intel_add(cid):
-    c = db.session.get(Case, cid) or abort(404)
-    form = IntelForm()
-    form.source_id.choices = source_choices()
-    form.timeline_id.choices = timeline_choices(c.id)
-    if form.validate_on_submit():
-        i = IntelItem(
-            case_id=c.id,
-            timeline_id=form.timeline_id.data or None,
-            source_id=form.source_id.data or None,
-            title=form.title.data, body=form.body.data,
-            category=form.category.data,
-            classification=form.classification.data,
-            source_reliability=form.source_reliability.data,
-            info_confidence=form.info_confidence.data,
-            status=form.status.data,
-            is_fact=form.is_fact.data, is_claim=form.is_claim.data,
-            analyst_comment=form.analyst_comment.data or "",
-            created_by=current_user.username,
-        )
-        db.session.add(i)
-        db.session.commit()
-        audit("intel_add", f"{i.title} [{i.status}]", actor=current_user.username)
-        flash("Intel item filed.", "success")
-    else:
-        flash("Invalid intel form.", "error")
-    return redirect(url_for("case_detail", cid=cid))
-
-
-@app.route("/intel/<int:iid>/delete", methods=["POST"])
-@login_required
-def intel_delete(iid):
-    i = db.session.get(IntelItem, iid) or abort(404)
-    cid = i.case_id
-    db.session.delete(i)
+def update_media_delete(uid, mid):
+    m = db.session.get(UpdateMedia, mid) or abort(404)
+    if m.update_id != uid:
+        abort(404)
+    cid = m.update.case_id
+    db.session.delete(m)
     db.session.commit()
-    return redirect(url_for("case_detail", cid=cid))
-
-
-@app.route("/intel/<int:iid>/status/<string:new_status>", methods=["POST"])
-@login_required
-def intel_status(iid, new_status):
-    i = db.session.get(IntelItem, iid) or abort(404)
-    allowed = [s[0] for s in INTEL_STATUS]
-    if new_status in allowed:
-        i.status = new_status
-        db.session.commit()
-        audit("intel_status", f"#{iid} → {new_status}", actor=current_user.username)
-    return redirect(url_for("case_detail", cid=i.case_id))
-
-
-# ============================================================
-# ROUTES — MEDIA
-# ============================================================
-@app.route("/cases/<int:cid>/media", methods=["POST"])
-@login_required
-def media_add(cid):
-    c = db.session.get(Case, cid) or abort(404)
-    form = MediaForm()
-    form.timeline_id.choices = timeline_choices(c.id)
-    form.parent_id.choices = media_choices(c.id)
-    if form.validate_on_submit():
-        f = form.file.data
-        raw = f.read()
-        digest = sha256_bytes(raw)
-
-        encrypted = bool(form.encrypt.data)
-        if encrypted:
-            if not form.passphrase.data or len(form.passphrase.data) < 6:
-                flash("Encryption passphrase must be at least 6 characters.", "error")
-                return redirect(url_for("case_detail", cid=cid))
-            raw = mpc_encrypt(raw, form.passphrase.data)
-
-        m = MediaItem(
-            case_id=c.id, timeline_id=form.timeline_id.data or None,
-            title=form.title.data, kind=form.kind.data,
-            filename=secure_filename(f.filename or "media.bin"),
-            mimetype=f.mimetype or "application/octet-stream",
-            description=form.description.data or "",
-            source_notes=form.source_notes.data or "",
-            classification=form.classification.data,
-            is_original=(form.parent_id.data or 0) == 0,
-            parent_id=form.parent_id.data or None,
-            derived_note=form.derived_note.data or "",
-            data=raw, sha256=digest, encrypted=encrypted,
-            created_by=current_user.username,
-        )
-        db.session.add(m)
-        db.session.commit()
-        audit("media_add", f"{m.title} ({m.kind}) sha256={digest[:16]}…", actor=current_user.username)
-        flash("Media secured.", "success")
-    else:
-        flash("Invalid media form.", "error")
     return redirect(url_for("case_detail", cid=cid))
 
 
 @app.route("/media/<int:mid>/view")
 @login_required
 def media_view(mid):
-    m = db.session.get(MediaItem, mid) or abort(404)
-    if not m.encrypted:
-        return send_file(io.BytesIO(m.data), mimetype=m.mimetype,
-                         as_attachment=False, download_name=m.filename)
-    pw = request.args.get("pw", "")
-    if not pw:
-        return render_template("media_unlock.html", media=m)
-    try:
-        plain = mpc_decrypt(m.data, pw)
-    except Exception:
-        flash("Decryption failed — wrong passphrase.", "error")
-        return redirect(url_for("media_unlock_retry", mid=mid))
-    return send_file(io.BytesIO(plain), mimetype=m.mimetype,
+    m = db.session.get(UpdateMedia, mid) or abort(404)
+    return send_file(io.BytesIO(m.data), mimetype=m.mimetype,
                      as_attachment=False, download_name=m.filename)
 
 
-@app.route("/media/<int:mid>/unlock", methods=["GET", "POST"])
-@login_required
-def media_unlock_retry(mid):
-    m = db.session.get(MediaItem, mid) or abort(404)
-    return render_template("media_unlock.html", media=m, retry=True)
-
-
-@app.route("/media/<int:mid>/download")
-@login_required
-def media_download(mid):
-    m = db.session.get(MediaItem, mid) or abort(404)
-    if m.encrypted:
-        flash("Media is encrypted. Unlock it first.", "error")
-        return redirect(url_for("case_detail", cid=m.case_id))
-    return send_file(io.BytesIO(m.data), mimetype=m.mimetype,
-                     as_attachment=True, download_name=m.filename)
-
-
-@app.route("/media/<int:mid>/delete", methods=["POST"])
-@login_required
-def media_delete(mid):
-    m = db.session.get(MediaItem, mid) or abort(404)
-    cid = m.case_id
-    db.session.delete(m)
-    db.session.commit()
-    return redirect(url_for("case_detail", cid=cid))
-
-
 # ============================================================
-# ROUTES — ENTITIES
+# ROUTES — PEOPLE & PLACES
 # ============================================================
 @app.route("/entities", methods=["GET", "POST"])
 @login_required
 def entities():
     form = EntityForm()
     if form.validate_on_submit():
-        lat, lng = REGION_MAP.get(form.region.data, (0, 0))
-        e = Entity(
-            name=form.name.data, type=form.type.data,
-            notes=form.notes.data or "", verified=form.verified.data,
-            threat_level=form.threat_level.data,
-            region=form.region.data or "",
-            latitude=lat, longitude=lng,
-        )
+        e = Entity(name=form.name.data, type=form.type.data,
+                   notes=form.notes.data or "", region=form.region.data or "")
         db.session.add(e)
         db.session.commit()
-        audit("entity_create", e.name, actor=current_user.username)
-        flash("Entity registered.", "success")
+        flash("Saved.", "success")
         return redirect(url_for("entities"))
     rows = db.session.execute(db.select(Entity).order_by(Entity.name)).scalars().all()
     return render_template("people.html", form=form, people=rows)
@@ -1242,12 +941,10 @@ def entities():
 @login_required
 def entity_detail(eid):
     e = db.session.get(Entity, eid) or abort(404)
-    rels_out = e.outgoing
-    rels_in = e.incoming
     cases = db.session.execute(
         db.select(CaseEntity).where(CaseEntity.entity_id == eid)
     ).scalars().all()
-    return render_template("person_detail.html", entity=e, rels_out=rels_out, rels_in=rels_in, cases=cases)
+    return render_template("person_detail.html", entity=e, cases=cases)
 
 
 @app.route("/entities/<int:eid>/delete", methods=["POST"])
@@ -1263,15 +960,15 @@ def entity_delete(eid):
 @login_required
 def case_entity_add(cid):
     c = db.session.get(Case, cid) or abort(404)
-    form = CaseEntityForm()
-    form.entity_id.choices = entity_choices()
-    if form.validate_on_submit():
-        link = CaseEntity(case_id=c.id, entity_id=form.entity_id.data, role=form.role.data)
-        db.session.add(link)
+    name = (request.form.get("name") or "").strip()
+    etype = request.form.get("type") or "Person"
+    if name:
+        e = Entity(name=name, type=etype)
+        db.session.add(e)
+        db.session.flush()
+        db.session.add(CaseEntity(case_id=c.id, entity_id=e.id, role=etype))
         db.session.commit()
-        audit("case_entity_add", f"OP-{cid:04d} entity#{form.entity_id.data} as {form.role.data}",
-              actor=current_user.username)
-        flash("Entity attached to case.", "success")
+        flash("Added.", "success")
     return redirect(url_for("case_detail", cid=cid))
 
 
@@ -1285,10 +982,25 @@ def case_entity_delete(link_id):
     return redirect(url_for("case_detail", cid=cid))
 
 
+@app.route("/link-entity", methods=["POST"])
+@login_required
+def link_entity():
+    """Attach existing entity to case."""
+    cid = request.form.get("case_id", type=int)
+    eid = request.form.get("entity_id", type=int)
+    if cid and eid:
+        if not db.session.execute(
+            db.select(CaseEntity).filter_by(case_id=cid, entity_id=eid)
+        ).scalar():
+            db.session.add(CaseEntity(case_id=cid, entity_id=eid, role="Person"))
+            db.session.commit()
+    return redirect(url_for("case_detail", cid=cid))
+
+
 # ============================================================
 # ROUTES — RELATIONSHIPS
 # ============================================================
-@app.route("/relationships", methods=["GET", "POST"])
+@app.route("/who-knows-who", methods=["GET", "POST"])
 @login_required
 def relationships():
     form = RelationshipForm()
@@ -1296,21 +1008,20 @@ def relationships():
     form.to_id.choices = entity_choices()
     if form.validate_on_submit():
         if form.from_id.data == form.to_id.data:
-            flash("Cannot relate an entity to itself.", "error")
+            flash("Cannot link someone to themselves.", "error")
         else:
             r = Relationship(
                 from_id=form.from_id.data, to_id=form.to_id.data,
                 relation=form.relation.data,
                 description=form.description.data or "",
-                status=form.status.data,
-                case_id=request.args.get("case_id", type=int),
             )
             db.session.add(r)
             db.session.commit()
-            audit("relationship_add", f"{r.from_id}→{r.to_id}", actor=current_user.username)
-            flash("Relationship recorded.", "success")
+            flash("Saved.", "success")
             return redirect(url_for("relationships"))
-    rows = db.session.execute(db.select(Relationship).order_by(Relationship.created_at.desc())).scalars().all()
+    rows = db.session.execute(
+        db.select(Relationship).order_by(Relationship.created_at.desc())
+    ).scalars().all()
     return render_template("relationships.html", form=form, relationships=rows)
 
 
@@ -1324,130 +1035,87 @@ def relationship_delete(rid):
 
 
 # ============================================================
-# ROUTES — SOURCES
+# ROUTES — CONTACTS
 # ============================================================
-@app.route("/sources", methods=["GET", "POST"])
+@app.route("/contacts", methods=["GET", "POST"])
 @login_required
-def sources():
+def contacts():
     form = SourceForm()
     if form.validate_on_submit():
-        s = Source(
-            handle=form.handle.data,
-            description=form.description.data or "",
-            reliability=form.reliability.data,
-            contact_notes=form.contact_notes.data or "",
-        )
+        s = Source(handle=form.handle.data, description=form.description.data or "")
         db.session.add(s)
         db.session.commit()
-        audit("source_add", s.handle, actor=current_user.username)
-        flash("Source recorded.", "success")
-        return redirect(url_for("sources"))
+        flash("Saved.", "success")
+        return redirect(url_for("contacts"))
     rows = db.session.execute(db.select(Source).order_by(Source.handle)).scalars().all()
     return render_template("sources.html", form=form, sources=rows)
 
 
-@app.route("/sources/<int:sid>/delete", methods=["POST"])
+@app.route("/contacts/<int:sid>/delete", methods=["POST"])
 @login_required
-def source_delete(sid):
+def contact_delete(sid):
     s = db.session.get(Source, sid) or abort(404)
     db.session.delete(s)
     db.session.commit()
-    return redirect(url_for("sources"))
+    return redirect(url_for("contacts"))
 
 
 # ============================================================
-# ROUTES — ANALYST VIEW
+# ROUTES — SEARCH + ACTIVITY
 # ============================================================
-@app.route("/cases/<int:cid>/analyst", methods=["POST"])
+@app.route("/search")
 @login_required
-def analyst_add(cid):
-    c = db.session.get(Case, cid) or abort(404)
-    form = AnalystForm()
-    if form.validate_on_submit():
-        a = AnalystNote(
-            case_id=c.id, category=form.category.data,
-            title=form.title.data, body=form.body.data,
-            linked_intel_ids=form.linked_intel_ids.data or "",
-            created_by=current_user.username,
-        )
-        db.session.add(a)
-        db.session.commit()
-        audit("analyst_add", f"{a.category}: {a.title}", actor=current_user.username)
-        flash("Analyst note saved.", "success")
-    return redirect(url_for("case_detail", cid=cid))
+def search():
+    q = (request.args.get("q") or "").strip()
+    results = {"cases": [], "updates": [], "entities": []}
+    if q:
+        like = f"%{q}%"
+        results["cases"] = db.session.execute(
+            db.select(Case).where(or_(Case.title.ilike(like), Case.subject.ilike(like), Case.notes.ilike(like)))
+        ).scalars().all()
+        results["updates"] = db.session.execute(
+            db.select(Update).where(Update.body.ilike(like)).order_by(Update.happened_at.desc())
+        ).scalars().all()
+        results["entities"] = db.session.execute(
+            db.select(Entity).where(or_(Entity.name.ilike(like), Entity.notes.ilike(like)))
+        ).scalars().all()
+    return render_template("search.html", q=q, results=results)
 
 
-@app.route("/analyst/<int:aid>/delete", methods=["POST"])
+@app.route("/activity")
 @login_required
-def analyst_delete(aid):
-    a = db.session.get(AnalystNote, aid) or abort(404)
-    cid = a.case_id
-    db.session.delete(a)
-    db.session.commit()
-    return redirect(url_for("case_detail", cid=cid))
+def activity():
+    rows = db.session.execute(
+        db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(300)
+    ).scalars().all()
+    return render_template("audit.html", entries=rows)
 
 
 # ============================================================
-# ROUTES — DEAD DROPS
+# ROUTES — TIME-LOCKED NOTES
 # ============================================================
-@app.route("/drops", methods=["GET", "POST"])
+@app.route("/timed-notes", methods=["GET", "POST"])
 @login_required
 def drops():
     form = DeadDropForm()
     if form.validate_on_submit():
-        d = DeadDrop(
-            title=form.title.data, body=form.body.data,
-            unlock_at=form.unlock_at.data,
-            classification=form.classification.data,
-            created_by=current_user.username,
-        )
+        d = DeadDrop(title=form.title.data, body=form.body.data,
+                     unlock_at=form.unlock_at.data, created_by=current_user.username)
         db.session.add(d)
         db.session.commit()
-        audit("dead_drop_create", d.title, actor=current_user.username)
-        flash("Dead drop sealed.", "success")
+        flash("Locked.", "success")
         return redirect(url_for("drops"))
     rows = db.session.execute(db.select(DeadDrop).order_by(DeadDrop.unlock_at)).scalars().all()
     return render_template("drops.html", form=form, drops=rows)
 
 
-@app.route("/drops/<int:did>/delete", methods=["POST"])
+@app.route("/timed-notes/<int:did>/delete", methods=["POST"])
 @login_required
 def drop_delete(did):
     d = db.session.get(DeadDrop, did) or abort(404)
     db.session.delete(d)
     db.session.commit()
     return redirect(url_for("drops"))
-
-
-# ============================================================
-# ROUTES — THREAT BOARD + MAP
-# ============================================================
-@app.route("/threat-board")
-@login_required
-def threat_board():
-    ops = db.session.execute(
-        db.select(Case).where(Case.status.in_(["Active", "Review"]))
-        .order_by(Case.priority, Case.due_date.asc().nullslast())
-    ).scalars().all()
-    groups = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": []}
-    for op in ops:
-        groups.setdefault(op.threat_level, []).append(op)
-    return render_template("threat_board.html", groups=groups)
-
-
-@app.route("/map")
-@login_required
-def map_view():
-    people = db.session.execute(
-        db.select(Entity).where(or_(Entity.latitude != 0, Entity.longitude != 0))
-    ).scalars().all()
-    markers = [{
-        "id": p.id, "name": p.name, "type": p.type,
-        "threat": p.threat_level, "region": p.region,
-        "lat": p.latitude, "lng": p.longitude,
-        "verified": p.verified, "color": threat_color(p.threat_level),
-    } for p in people]
-    return render_template("map.html", markers=markers)
 
 
 # ============================================================
@@ -1458,12 +1126,11 @@ def map_view():
 def briefing():
     days = int(request.args.get("days", 1))
     since = datetime.utcnow() - timedelta(days=days)
-    cases = db.session.execute(db.select(Case).where(Case.created_at >= since).order_by(Case.priority)).scalars().all()
-    intel = db.session.execute(db.select(IntelItem).where(IntelItem.created_at >= since).order_by(IntelItem.created_at.desc())).scalars().all()
-    media = db.session.execute(db.select(MediaItem).where(MediaItem.created_at >= since).order_by(MediaItem.created_at.desc())).scalars().all()
-    entities = db.session.execute(db.select(Entity).where(Entity.created_at >= since).order_by(Entity.name)).scalars().all()
-    return render_template("briefing.html", days=days, since=since,
-                           cases=cases, intel=intel, media=media, entities=entities)
+    updates = db.session.execute(
+        db.select(Update).where(Update.happened_at >= since)
+        .order_by(Update.happened_at.desc())
+    ).scalars().all()
+    return render_template("briefing.html", days=days, since=since, updates=updates)
 
 
 @app.route("/briefing.pdf", methods=["POST"])
@@ -1476,97 +1143,54 @@ def briefing_pdf():
     days = int(request.form.get("days", 1))
     pdf_bytes = build_briefing_pdf(days)
     encrypted = mpc_encrypt(pdf_bytes, form.password.data)
-    audit("briefing_download", f"{days}d briefing", actor=current_user.username)
     fname = f"MIS_Briefing_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.mpcenc"
     return send_file(io.BytesIO(encrypted), mimetype="application/octet-stream",
                      as_attachment=True, download_name=fname)
 
 
 # ============================================================
-# ROUTES — SEARCH + AUDIT
+# ROUTES — USERS
 # ============================================================
-@app.route("/search")
+@app.route("/users", methods=["GET", "POST"])
 @login_required
-def search():
-    q = (request.args.get("q") or "").strip()
-    results = {"intel": [], "entities": [], "cases": [], "media": [], "timeline": []}
-    if q:
-        like = f"%{q}%"
-        results["intel"] = db.session.execute(
-            db.select(IntelItem).where(or_(IntelItem.title.ilike(like), IntelItem.body.ilike(like)))
-        ).scalars().all()
-        results["entities"] = db.session.execute(
-            db.select(Entity).where(or_(Entity.name.ilike(like), Entity.notes.ilike(like)))
-        ).scalars().all()
-        results["cases"] = db.session.execute(
-            db.select(Case).where(or_(Case.title.ilike(like), Case.objective.ilike(like), Case.subject.ilike(like)))
-        ).scalars().all()
-        results["media"] = db.session.execute(
-            db.select(MediaItem).where(or_(MediaItem.title.ilike(like), MediaItem.description.ilike(like)))
-        ).scalars().all()
-        results["timeline"] = db.session.execute(
-            db.select(TimelineEntry).where(or_(TimelineEntry.title.ilike(like), TimelineEntry.description.ilike(like)))
-        ).scalars().all()
-    return render_template("search.html", q=q, results=results)
-
-
-@app.route("/audit")
-@login_required
-def audit_log():
-    rows = db.session.execute(
-        db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(300)
-    ).scalars().all()
-    return render_template("audit.html", entries=rows)
-
-
-# ============================================================
-# ROUTES — AGENTS
-# ============================================================
-@app.route("/agents", methods=["GET", "POST"])
-@login_required
-def agents():
-    form = AgentForm()
+def users():
+    form = UserForm()
     if form.validate_on_submit():
         uname = form.username.data.strip()
-        existing = db.session.execute(db.select(User).filter_by(username=uname)).scalar()
-        if existing:
-            flash("Agent ID already in use.", "error")
+        if db.session.execute(db.select(User).filter_by(username=uname)).scalar():
+            flash("Username already taken.", "error")
         else:
             u = User(username=uname, codename=form.codename.data or "",
                      clearance=form.clearance.data)
             u.set_password(form.password.data)
             db.session.add(u)
             db.session.commit()
-            audit("agent_register", uname, actor=current_user.username)
-            flash("Agent registered.", "success")
-            return redirect(url_for("agents"))
+            flash("User created.", "success")
+            return redirect(url_for("users"))
     rows = db.session.execute(db.select(User).order_by(User.created_at)).scalars().all()
     return render_template("agents.html", form=form, agents=rows)
 
 
-@app.route("/agents/<int:uid>/delete", methods=["POST"])
+@app.route("/users/<int:uid>/delete", methods=["POST"])
 @login_required
-def agent_delete(uid):
+def user_delete(uid):
     if uid == current_user.id:
-        flash("Cannot delete your own account.", "error")
-        return redirect(url_for("agents"))
+        flash("You cannot delete yourself.", "error")
+        return redirect(url_for("users"))
     u = db.session.get(User, uid) or abort(404)
     db.session.delete(u)
     db.session.commit()
-    return redirect(url_for("agents"))
+    return redirect(url_for("users"))
 
 
 # ============================================================
-# BOOTSTRAP — order matters: create_all → migrate → seed
+# BOOTSTRAP
 # ============================================================
 def bootstrap():
     with app.app_context():
         db.create_all()
-
-        # 1) Add any missing columns to existing tables
         auto_migrate()
 
-        # 2) Seed / repair the initial user
         u = app.config["INITIAL_USERNAME"]
         p = app.config["INITIAL_PASSWORD"]
         force = os.getenv("FORCE_SEED", "0") == "1"
@@ -1576,7 +1200,7 @@ def bootstrap():
         if force:
             User.query.delete()
             db.session.commit()
-            user = User(username=u, codename="ALPHA", clearance="EYES_ONLY")
+            user = User(username=u, codename="Admin", clearance="EYES_ONLY")
             user.set_password(p)
             db.session.add(user)
             db.session.commit()
@@ -1584,19 +1208,13 @@ def bootstrap():
             return
 
         if not existing:
-            user = User(username=u, codename="ALPHA", clearance="EYES_ONLY")
+            user = User(username=u, codename="Admin", clearance="EYES_ONLY")
             user.set_password(p)
             db.session.add(user)
             db.session.commit()
             print(f"✅ Seeded user: {u}")
         else:
-            h = (existing.password_hash or "").strip()
-            if not h or ":" not in h:
-                existing.set_password(p)
-                db.session.commit()
-                print(f"🩹 Repaired hash for {u}")
-            else:
-                print(f"✅ User {u} hash OK")
+            print(f"✅ User {u} OK")
 
 
 bootstrap()

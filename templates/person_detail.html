@@ -2,68 +2,18 @@
 {% block title %}{{ entity.name }}{% endblock %}
 {% block content %}
 <h1>{{ entity.name }}</h1>
+<p><span class="badge">{{ entity.type }}</span>
+   {% if entity.region %}<span class="dim">— {{ entity.region }}</span>{% endif %}</p>
+{% if entity.notes %}<p>{{ entity.notes }}</p>{% endif %}
 
 <section class="card">
-  <h2>Profile</h2>
-  <p><span class="badge classified">{{ entity.type }}</span>
-     <span class="badge">{{ entity.threat_level }}</span>
-     {% if entity.verified %}<span class="badge ok">VERIFIED</span>{% endif %}</p>
-  {% if entity.region and entity.region != '—' %}<p class="dim">◍ {{ entity.region }}</p>{% endif %}
-  {% if entity.notes %}<p>{{ entity.notes }}</p>{% endif %}
-</section>
-
-<section class="card">
-  <h2>Cases Involving This Entity</h2>
+  <h2>Appears on these cases</h2>
   {% if cases %}
   <ul class="list">
     {% for link in cases %}
-    <li>
-      <a href="{{ url_for('case_detail', cid=link.case.id) }}" style="flex:1 1 100%">
-        <b style="color:var(--amber)">OP-{{ '%04d'|format(link.case.id) }}</b> {{ link.case.title }}
-      </a>
-      <span class="badge classified">{{ link.role }}</span>
-    </li>
+    <li><a href="{{ url_for('case_detail', cid=link.case.id) }}">{{ link.case.title }}</a></li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">// No cases</p>{% endif %}
-</section>
-
-<section class="card">
-  <h2>Relationships · Outgoing</h2>
-  {% if rels_out %}
-  <ul class="list">
-    {% for r in rels_out %}
-    <li>
-      <div style="flex:1 1 100%">
-        <b style="color:var(--amber)">{{ entity.name }}</b>
-        <span class="badge classified">{{ r.relation }}</span>
-        <a href="{{ url_for('entity_detail', eid=r.to_entity.id) }}"><b>{{ r.to_entity.name }}</b></a>
-        <span class="badge {{ 'ok' if r.status=='VERIFIED' else 'warn' if r.status in ['DISPUTED','FALSE'] else '' }}">{{ r.status }}</span>
-        {% if r.description %}<div class="dim">{{ r.description }}</div>{% endif %}
-      </div>
-      <form method="POST" action="{{ url_for('relationship_delete', rid=r.id) }}"
-            onsubmit="return confirm('Delete relationship?');"><button class="danger-btn">✕</button></form>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="dim">// None</p>{% endif %}
-</section>
-
-<section class="card">
-  <h2>Relationships · Incoming</h2>
-  {% if rels_in %}
-  <ul class="list">
-    {% for r in rels_in %}
-    <li>
-      <div style="flex:1 1 100%">
-        <a href="{{ url_for('entity_detail', eid=r.from_entity.id) }}"><b style="color:var(--amber)">{{ r.from_entity.name }}</b></a>
-        <span class="badge classified">{{ r.relation }}</span>
-        <b>{{ entity.name }}</b>
-        <span class="badge {{ 'ok' if r.status=='VERIFIED' else 'warn' if r.status in ['DISPUTED','FALSE'] else '' }}">{{ r.status }}</span>
-      </div>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="dim">// None</p>{% endif %}
+  {% else %}<p class="dim">Not on any case yet.</p>{% endif %}
 </section>
 {% endblock %}

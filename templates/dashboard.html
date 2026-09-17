@@ -1,77 +1,128 @@
 {% extends "base.html" %}
-{% block title %}War Room{% endblock %}
+{% block title %}Home{% endblock %}
 {% block content %}
-<h1>War Room</h1>
 
-<div class="stat-grid">
-  <a class="stat-card" href="{{ url_for('cases') }}"><div class="stat-num">{{ '%03d'|format(stats.cases) }}</div><div class="stat-label">◈ Cases</div></a>
-  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.timeline) }}</div><div class="stat-label">◷ Timeline</div></a>
-  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.intel) }}</div><div class="stat-label">▤ Intel</div></a>
-  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.media) }}</div><div class="stat-label">⬢ Media</div></a>
-  <a class="stat-card" href="{{ url_for('entities') }}"><div class="stat-num">{{ '%03d'|format(stats.entities) }}</div><div class="stat-label">◍ Entities</div></a>
-  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.analyst) }}</div><div class="stat-label">▣ Analyst</div></a>
-  <a class="stat-card" href="{{ url_for('agents') }}"><div class="stat-num">{{ '%03d'|format(stats.agents) }}</div><div class="stat-label">◆ Agents</div></a>
-  <a class="stat-card" href="{{ url_for('drops') }}"><div class="stat-num">{{ '%03d'|format(stats.drops) }}</div><div class="stat-label">✉ Drops</div></a>
-</div>
+<section class="card quick-add">
+  <h2>What did you learn?</h2>
+  <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data" id="quickForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <textarea name="body" id="bodyField" rows="4" placeholder="Type here..."></textarea>
 
-<div class="two-col">
-  <section class="card">
-    <h2>Priority Cases</h2>
-    {% if threat_ops %}
-    <ul class="list">
-      {% for c in threat_ops %}
-      <li>
-        <a href="{{ url_for('case_detail', cid=c.id) }}" style="flex:1 1 100%">
-          <b style="color:var(--amber)">P{{ c.priority }} · OP-{{ '%04d'|format(c.id) }}</b>
-          <span style="color:var(--text)">{{ c.title }}</span>
-        </a>
-        <span class="badge">{{ c.threat_level }}</span>
-      </li>
+    <label>About</label>
+    <select name="case_id" required>
+      <option value="">— choose a case —</option>
+      {% for cid, title in case_choices %}
+        <option value="{{ cid }}">{{ title }}</option>
       {% endfor %}
-    </ul>
-    {% else %}<p class="dim">// No active cases</p>{% endif %}
-  </section>
+    </select>
 
-  <section class="card">
-    <h2>Quick Directives</h2>
-    <ul class="quick">
-      <li><a href="{{ url_for('cases') }}">Open New Case File</a></li>
-      <li><a href="{{ url_for('entities') }}">Register Entity</a></li>
-      <li><a href="{{ url_for('sources') }}">Log Source</a></li>
-      <li><a href="{{ url_for('relationships') }}">Record Relationship</a></li>
-      <li><a href="{{ url_for('drops') }}">Seal Dead Drop</a></li>
-      <li><a href="{{ url_for('briefing') }}">Generate Briefing</a></li>
-    </ul>
-  </section>
-</div>
+    <label>When</label>
+    <input type="datetime-local" name="happened_at" id="whenField">
 
-{% if drops %}
+    <div class="attach-row">
+      <label class="attach">
+        📷 Add Photos
+        <input type="file" name="photos" accept="image/*" multiple>
+      </label>
+      <label class="attach">
+        🎙 Add Voice
+        <input type="file" name="voice" accept="audio/*">
+      </label>
+    </div>
+
+    <div id="preview"></div>
+
+    <button class="primary big" type="submit">Save</button>
+  </form>
+</section>
+
 <section class="card">
-  <h2>Pending Dead Drops</h2>
+  <h2>Your Cases</h2>
+  {% if cases %}
   <ul class="list">
-    {% for d in drops %}
+    {% for c in cases %}
     <li>
-      <div style="flex:1 1 100%">
-        <b style="color:var(--amber)">{{ d.title }}</b>
-        <div class="dim">Unlocks {{ d.unlock_at.strftime('%Y-%m-%d %H:%M') }}</div>
+      <a href="{{ url_for('case_detail', cid=c.id) }}" class="case-link">
+        <b>{{ c.title }}</b>
+        {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
+      </a>
+      <span class="badge">{{ c.updates|length }} update{{ 's' if c.updates|length != 1 }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dim">No cases yet. <a href="{{ url_for('cases') }}">Create one →</a></p>
+  {% endif %}
+</section>
+
+{% if recent %}
+<section class="card">
+  <h2>Recent Updates</h2>
+  <ul class="updates">
+    {% for u in recent %}
+    <li>
+      <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
+      <div class="upd-case dim">{{ u.case.title if u.case else '—' }}</div>
+      {% if u.body %}<div class="upd-body">{{ u.body }}</div>{% endif %}
+      {% if u.photos %}
+      <div class="upd-media">
+        {% for m in u.photos %}
+          {% if m.kind == 'photo' %}
+            <img src="{{ url_for('media_view', mid=m.id) }}" alt="" loading="lazy">
+          {% else %}
+            <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
+          {% endif %}
+        {% endfor %}
       </div>
-      <span class="badge warn">{{ d.countdown }}</span>
+      {% endif %}
+      <div class="upd-actions">
+        <a href="{{ url_for('update_edit', uid=u.id) }}">edit</a>
+        <form method="POST" action="{{ url_for('update_delete', uid=u.id) }}"
+              onsubmit="return confirm('Delete this update?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="link-btn">delete</button>
+        </form>
+      </div>
     </li>
     {% endfor %}
   </ul>
 </section>
 {% endif %}
 
-<section class="card">
-  <h2>Operations Log</h2>
-  {% if recent %}
-  <ul class="timeline">
-    {% for a in recent %}
-    <li><span class="dim">{{ a.created_at.strftime('%H:%M:%S') }}</span>
-      <b style="color:var(--amber)">{{ a.action|upper }}</b>
-      <span class="dim">{{ a.detail }}</span></li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="dim">// No activity</p>{% endif %}
-</section>
+<script>
+// default "when" to now
+(function(){
+  const el = document.getElementById('whenField');
+  if (!el) return;
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  el.value = now.toISOString().slice(0,16);
+})();
+
+// preview attached media before upload
+(function(){
+  const photosInput = document.querySelector('input[name="photos"]');
+  const voiceInput = document.querySelector('input[name="voice"]');
+  const prev = document.getElementById('preview');
+  function render() {
+    prev.innerHTML = '';
+    if (photosInput.files) {
+      [...photosInput.files].forEach(f => {
+        const url = URL.createObjectURL(f);
+        const img = document.createElement('img');
+        img.src = url; img.className = 'thumb';
+        prev.appendChild(img);
+      });
+    }
+    if (voiceInput.files && voiceInput.files[0]) {
+      const url = URL.createObjectURL(voiceInput.files[0]);
+      const a = document.createElement('audio');
+      a.controls = true; a.src = url; a.preload = 'none';
+      prev.appendChild(a);
+    }
+  }
+  if (photosInput) photosInput.addEventListener('change', render);
+  if (voiceInput) voiceInput.addEventListener('change', render);
+})();
+</script>
 {% endblock %}

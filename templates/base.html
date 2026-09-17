@@ -4,41 +4,35 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0a08">
-<title>{% block title %}MIS{% endblock %} · CLASSIFIED</title>
+<title>{% block title %}MIS{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 {% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
 
 {% if current_user.is_authenticated %}
-{% set active = request.endpoint %}
-
-<div class="classified-banner">◆ TOP SECRET // MIS-ONLY // NOFORN ◆</div>
-
 <header class="topbar">
-  <div class="brand">MIS<span class="codename">// INTEL</span></div>
+  <div class="brand"><a href="{{ url_for('dashboard') }}">MIS</a></div>
   <nav>
-    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">War Room</a>
-    <a href="{{ url_for('threat_board') }}" class="{{ 'active' if active=='threat_board' }}">Threat</a>
-    <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">Cases</a>
-    <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}">Entities</a>
-    <a href="{{ url_for('relationships') }}" class="{{ 'active' if active=='relationships' }}">Graph</a>
-    <a href="{{ url_for('sources') }}" class="{{ 'active' if active=='sources' }}">Sources</a>
-    <a href="{{ url_for('map_view') }}" class="{{ 'active' if active=='map_view' }}">Map</a>
-    <a href="{{ url_for('drops') }}" class="{{ 'active' if active=='drops' }}">Drops</a>
-    <a href="{{ url_for('briefing') }}" class="{{ 'active' if active=='briefing' }}">Brief</a>
-    <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">SIGINT</a>
-    <a href="{{ url_for('agents') }}" class="{{ 'active' if active=='agents' }}">Agents</a>
-    <a href="{{ url_for('audit_log') }}" class="{{ 'active' if active=='audit_log' }}">Log</a>
+    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' }}">Home</a>
+    <a href="{{ url_for('cases') }}" class="{{ 'active' if request.endpoint in ['cases','case_detail'] }}">Cases</a>
+    <a href="{{ url_for('entities') }}" class="{{ 'active' if request.endpoint in ['entities','entity_detail'] }}">People &amp; Places</a>
+    <a href="{{ url_for('relationships') }}" class="{{ 'active' if request.endpoint=='relationships' }}">Connections</a>
+    <a href="{{ url_for('contacts') }}" class="{{ 'active' if request.endpoint=='contacts' }}">Contacts</a>
+    <a href="{{ url_for('search') }}" class="{{ 'active' if request.endpoint=='search' }}">Search</a>
+    <a href="{{ url_for('briefing') }}" class="{{ 'active' if request.endpoint=='briefing' }}">Briefing</a>
+    <a href="{{ url_for('drops') }}" class="{{ 'active' if request.endpoint=='drops' }}">Timed Notes</a>
+    <a href="{{ url_for('activity') }}" class="{{ 'active' if request.endpoint=='activity' }}">Activity</a>
+    <a href="{{ url_for('users') }}" class="{{ 'active' if request.endpoint=='users' }}">Users</a>
+    <a href="{{ url_for('logout') }}" class="logout">Log out</a>
   </nav>
-  <div class="agent">AGENT {{ current_user.username|upper }}{% if current_user.codename %} · {{ current_user.codename }}{% endif %}</div>
 </header>
 {% endif %}
 
 <main class="container">
   {% with msgs = get_flashed_messages(with_categories=true) %}
     {% if msgs %}<div class="flashes">
-      {% for cat,m in msgs %}<div class="flash {{cat}}">▸ {{m}}</div>{% endfor %}
+      {% for cat,m in msgs %}<div class="flash {{cat}}">{{ m }}</div>{% endfor %}
     </div>{% endif %}
   {% endwith %}
   {% block content %}{% endblock %}
@@ -46,16 +40,12 @@
 
 {% if current_user.is_authenticated %}
 <nav class="mobilenav">
-  <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}"><span class="ico">◉</span>War</a>
-  <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}"><span class="ico">◈</span>Cases</a>
-  <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}"><span class="ico">◍</span>Entities</a>
-  <a href="{{ url_for('relationships') }}" class="{{ 'active' if active=='relationships' }}"><span class="ico">◇</span>Graph</a>
-  <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}"><span class="ico">▤</span>SIGINT</a>
+  <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' }}"><span class="ico">🏠</span>Home</a>
+  <a href="{{ url_for('cases') }}" class="{{ 'active' if request.endpoint in ['cases','case_detail'] }}"><span class="ico">📁</span>Cases</a>
+  <a href="{{ url_for('entities') }}" class="{{ 'active' if request.endpoint in ['entities','entity_detail'] }}"><span class="ico">👤</span>People</a>
+  <a href="{{ url_for('search') }}" class="{{ 'active' if request.endpoint=='search' }}"><span class="ico">🔎</span>Search</a>
+  <a href="{{ url_for('activity') }}" class="{{ 'active' if request.endpoint=='activity' }}"><span class="ico">📋</span>Log</a>
 </nav>
 {% endif %}
-
-{% block footer %}
-<footer class="footer">◆ COLLECT · VERIFY · CORRELATE · ANALYZE · PRESERVE ◆</footer>
-{% endblock %}
 </body>
 </html>

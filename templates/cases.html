@@ -1,28 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Cases{% endblock %}
 {% block content %}
-<h1>Case Files</h1>
+<h1>Cases</h1>
 
 <section class="card">
-  <h2>Open New Case</h2>
+  <h2>New Case</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Title</label>{{ form.title(placeholder="Short label for this case") }}
-    <label>Subject</label>{{ form.subject(placeholder="Who/what the case concerns") }}
-    <label>Objective</label>{{ form.objective(rows=2) }}
-    <label>Purpose / Legal Basis</label>
-    {{ form.legal_note(rows=2, placeholder="Why you are documenting this. Keep a record for lawful hand-over.") }}
+    <label>Case name</label>{{ form.title(placeholder="e.g. John Doe") }}
+    <label>Who/what is this about?</label>{{ form.subject(placeholder="Optional") }}
+    <label>Notes</label>{{ form.notes(rows=3) }}
     <div class="row">
       <div><label>Status</label>{{ form.status() }}</div>
-      <div><label>Classification</label>{{ form.classification() }}</div>
-      <div><label>Threat Level</label>{{ form.threat_level() }}</div>
-    </div>
-    <div class="row">
       <div><label>Priority</label>{{ form.priority() }}</div>
-      <div><label>Due</label>{{ form.due_date(placeholder="YYYY-MM-DD HH:MM") }}</div>
-      <div></div>
+      <div><label>Reminder date</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}</div>
     </div>
-    <button class="primary">Open Case File</button>
+    <button class="primary big">Create Case</button>
   </form>
 </section>
 
@@ -32,21 +25,14 @@
   <ul class="list">
     {% for c in cases %}
     <li>
-      <a href="{{ url_for('case_detail', cid=c.id) }}" style="flex:1 1 100%">
-        <b style="color:var(--amber)">P{{ c.priority }} · OP-{{ '%04d'|format(c.id) }}</b>
-        <span style="color:var(--text)">{{ c.title }}</span>
-        {% if c.subject %}<div class="dim">Subject: {{ c.subject }}</div>{% endif %}
+      <a href="{{ url_for('case_detail', cid=c.id) }}" class="case-link">
+        <b>{{ c.title }}</b>
+        {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
       </a>
-      <span class="badge">{{ c.status }}</span>
-      <span class="badge classified">{{ c.classification }}</span>
-      <span class="badge warn">{{ c.threat_level }}</span>
-      <form method="POST" action="{{ url_for('case_delete', cid=c.id) }}" class="inline-del"
-            onsubmit="return confirm('Purge case? All timeline, intel, media linked to it will also be removed.');">
-        <button class="danger-btn">✕</button>
-      </form>
+      <span class="badge">{{ c.updates|length }} update{{ 's' if c.updates|length != 1 }}</span>
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">// No cases yet</p>{% endif %}
+  {% else %}<p class="dim">No cases yet.</p>{% endif %}
 </section>
 {% endblock %}

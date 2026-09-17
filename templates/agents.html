@@ -1,35 +1,35 @@
 {% extends "base.html" %}
-{% block title %}Agents{% endblock %}
+{% block title %}Users{% endblock %}
 {% block content %}
-<h1>Agent Registry</h1>
+<h1>Users</h1>
 
 <section class="card">
-  <h2>Register New Agent</h2>
+  <h2>Add a user</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Agent ID</label>{{ form.username(placeholder="agent.id") }}
-    <label>Passphrase</label>{{ form.password(placeholder="min 8 chars") }}
-    <label>Codename</label>{{ form.codename(placeholder="e.g. NIGHTHAWK") }}
-    <label>Clearance</label>{{ form.clearance() }}
-    <button class="primary">Register Agent</button>
+    <label>Username</label>{{ form.username() }}
+    <label>Password</label>{{ form.password() }}
+    <label>Display name</label>{{ form.codename() }}
+    <label>Role</label>{{ form.clearance() }}
+    <button class="primary">Create User</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>Active Agents</h2>
+  <h2>All users</h2>
   <ul class="list">
     {% for a in agents %}
     <li>
-      <div style="flex:1 1 100%">
-        <b style="color:var(--amber)">{{ a.username|upper }}</b>
-        {% if a.codename %}<span class="badge classified">{{ a.codename }}</span>{% endif %}
-        <span class="badge ok">{{ a.clearance }}</span>
-        {% if a.id == current_user.id %}<span class="badge">YOU</span>{% endif %}
-        <div class="dim">Registered {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
-      </div>
+      <b>{{ a.username }}</b>
+      {% if a.codename %}<span class="dim">— {{ a.codename }}</span>{% endif %}
+      <span class="badge">{{ a.clearance }}</span>
+      {% if a.id == current_user.id %}<span class="badge ok">you</span>{% endif %}
       {% if a.id != current_user.id %}
-      <form method="POST" action="{{ url_for('agent_delete', uid=a.id) }}"
-            onsubmit="return confirm('Remove agent?');"><button class="danger-btn">✕</button></form>
+      <form method="POST" action="{{ url_for('user_delete', uid=a.id) }}"
+            onsubmit="return confirm('Remove user?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-btn">remove</button>
+      </form>
       {% endif %}
     </li>
     {% endfor %}
