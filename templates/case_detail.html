@@ -1,25 +1,28 @@
 {% extends "base.html" %}
-{% block title %}Case #{{ case.id }}{% endblock %}
+{% block title %}OP-{{ '%04d'|format(case.id) }}{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Case #{{ case.id }}</h1>
+<h1>OP-{{ '%04d'|format(case.id) }}</h1>
 
 <section class="card">
-  <h2>Edit Case</h2>
+  <h2>Operation Parameters</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Title</label>{{ form.title() }}
+    <label>Operation Title</label>{{ form.title() }}
     <label>Objective</label>{{ form.objective(rows=3) }}
     <label>Status</label>{{ form.status() }}
-    <button class="primary">Save</button>
+    <button class="primary">Update File</button>
   </form>
 </section>
 
 <section class="card highlight">
-  <h2>🔐 Encrypted Report</h2>
-  <p class="dim">Enter a password. The PDF is AES-256-GCM encrypted (PBKDF2-SHA256, 200,000 iterations). Decrypt with Mpcipher Tool using the same password.</p>
+  <h2>Encrypted Transmission · Report Export</h2>
+  <p class="dim">
+    Enter a passphrase. The report is sealed with <b>AES-256-GCM</b> (PBKDF2-SHA256, 200,000 iters).
+    Decrypt via Mpcipher Tool with the same passphrase.
+  </p>
   <form method="POST" action="{{ url_for('case_report', cid=case.id) }}">
     {{ report_form.hidden_tag() }}
-    {{ report_form.password(placeholder="Encryption password") }}
+    {{ report_form.password(placeholder="TRANSMISSION PASSPHRASE") }}
     {{ report_form.submit(class_="primary") }}
   </form>
   <p class="dim" style="margin-top:10px">
@@ -28,31 +31,43 @@
 </section>
 
 <section class="card">
-  <h2>📝 Notes ({{ case.notes|length }})</h2>
+  <h2>Field Reports · {{ case.notes|length }}</h2>
   {% if case.notes %}
   <ul class="list">
     {% for n in case.notes %}
-    <li><b>{{ n.title }}</b> — <span class="dim">{{ n.body[:120] }}</span></li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="dim">No notes linked to this case.</p>
-  {% endif %}
-</section>
-
-<section class="card">
-  <h2>📄 Evidence ({{ case.evidence|length }})</h2>
-  {% if case.evidence %}
-  <ul class="list">
-    {% for e in case.evidence %}
     <li>
-      <b>{{ e.title }}</b> — <code>{{ e.sha256[:24] }}…</code>
-      {% if e.verified %}<span class="badge ok">Verified</span>{% else %}<span class="badge warn">Unverified</span>{% endif %}
+      <div style="flex:1 1 100%">
+        <b style="color:var(--amber)">{{ n.title }}</b><br>
+        <span class="dim">{{ n.body[:140] }}</span>
+      </div>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No evidence linked.</p>
+  <p class="dim">// No reports attached</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Evidence Vault · {{ case.evidence|length }}</h2>
+  {% if case.evidence %}
+  <ul class="list">
+    {% for e in case.evidence %}
+    <li>
+      <div style="flex:1 1 100%">
+        <b>{{ e.title }}</b><br>
+        <code>{{ e.sha256[:32] }}…</code>
+      </div>
+      {% if e.verified %}
+        <span class="badge ok">SEALED</span>
+      {% else %}
+        <span class="badge warn">UNVERIFIED</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dim">// No evidence attached</p>
   {% endif %}
 </section>
 {% endblock %}

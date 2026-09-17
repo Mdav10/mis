@@ -1,52 +1,53 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}War Room{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Operational Picture</h1>
+<h1>War Room <span class="accent">▮</span></h1>
 
 <div class="stat-grid">
   <a class="stat-card" href="{{ url_for('cases') }}">
-    <div class="stat-num">{{ stats.cases }}</div>
-    <div class="stat-label">📁 Cases</div>
+    <div class="stat-num">{{ '%03d'|format(stats.cases) }}</div>
+    <div class="stat-label">◈ Operations</div>
   </a>
   <a class="stat-card" href="{{ url_for('people') }}">
-    <div class="stat-num">{{ stats.people }}</div>
-    <div class="stat-label">👤 Entities</div>
+    <div class="stat-num">{{ '%03d'|format(stats.people) }}</div>
+    <div class="stat-label">◉ Assets</div>
   </a>
   <a class="stat-card" href="{{ url_for('notes') }}">
-    <div class="stat-num">{{ stats.notes }}</div>
-    <div class="stat-label">📝 Notes</div>
+    <div class="stat-num">{{ '%03d'|format(stats.notes) }}</div>
+    <div class="stat-label">▤ Reports</div>
   </a>
   <a class="stat-card" href="{{ url_for('evidence') }}">
-    <div class="stat-num">{{ stats.evidence }}</div>
-    <div class="stat-label">📄 Evidence</div>
+    <div class="stat-num">{{ '%03d'|format(stats.evidence) }}</div>
+    <div class="stat-label">⬢ Vault</div>
   </a>
 </div>
 
 <div class="two-col">
   <section class="card">
-    <h2>⚡ Quick Actions</h2>
+    <h2>Quick Directives</h2>
     <ul class="quick">
-      <li><a href="{{ url_for('cases') }}">+ New Case</a></li>
-      <li><a href="{{ url_for('people') }}">+ New Person</a></li>
-      <li><a href="{{ url_for('notes') }}">+ New Note</a></li>
-      <li><a href="{{ url_for('evidence') }}">+ New Evidence</a></li>
-      <li><a href="{{ url_for('search') }}">🔎 Search Intelligence</a></li>
+      <li><a href="{{ url_for('cases') }}">Launch New Operation</a></li>
+      <li><a href="{{ url_for('people') }}">Register Asset / POI</a></li>
+      <li><a href="{{ url_for('notes') }}">Log Field Report</a></li>
+      <li><a href="{{ url_for('evidence') }}">Secure Evidence</a></li>
+      <li><a href="{{ url_for('search') }}">SIGINT Query</a></li>
     </ul>
   </section>
 
   <section class="card">
-    <h2>🕒 Recent Activity</h2>
+    <h2>Operations Log — Live Feed</h2>
     {% if recent %}
     <ul class="timeline">
       {% for a in recent %}
       <li>
-        <span class="dim">{{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</span> —
-        <b>{{ a.action }}</b> {{ a.detail }}
+        <span class="dim">{{ a.created_at.strftime('%H:%M:%S') }}</span>
+        <b style="color:var(--amber)">{{ a.action|upper }}</b>
+        <span class="dim">{{ a.detail }}</span>
       </li>
       {% endfor %}
     </ul>
     {% else %}
-      <p class="dim">No activity yet.</p>
+      <p class="dim">// No recent activity</p>
     {% endif %}
   </section>
 </div>

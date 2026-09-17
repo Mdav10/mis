@@ -1,49 +1,49 @@
 {% extends "base.html" %}
-{% block title %}Notes{% endblock %}
+{% block title %}Field Reports{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Intelligence Notes</h1>
+<h1>Field Reports</h1>
 
 <section class="card">
-  <h2>New Note</h2>
+  <h2>Log New Report</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Title</label>{{ form.title(placeholder="Title") }}
-    <label>Body</label>{{ form.body(placeholder="Body", rows=4) }}
-    <label>Source</label>{{ form.source(placeholder="Source") }}
+    <label>Subject</label>{{ form.title(placeholder="Report subject") }}
+    <label>Report Body</label>{{ form.body(placeholder="Intelligence content...", rows=4) }}
+    <label>Source</label>{{ form.source(placeholder="Source identifier") }}
     <div class="row">
       <div><label>Source Reliability</label>{{ form.reliability() }}</div>
-      <div><label>Information Confidence</label>{{ form.confidence() }}</div>
-      <div><label>Related Case</label>{{ form.case_id() }}</div>
+      <div><label>Info Confidence</label>{{ form.confidence() }}</div>
+      <div><label>Linked Operation</label>{{ form.case_id() }}</div>
     </div>
-    <button class="primary">Save Note</button>
+    <button class="primary">File Report</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>All Notes</h2>
+  <h2>Filed Reports</h2>
   {% if notes %}
   <ul class="list">
     {% for n in notes %}
     <li>
       <div style="flex:1 1 100%">
-        <b>{{ n.title }}</b><br>
-        <span class="dim">{{ n.body[:200] }}{% if n.body|length > 200 %}…{% endif %}</span><br>
+        <b style="color:var(--amber)">{{ n.title }}</b><br>
+        <span style="color:var(--text)">{{ n.body[:200] }}{% if n.body|length > 200 %}…{% endif %}</span><br>
         <small class="dim">
-          Source: {{ n.source or '—' }} |
-          Rel: {{ n.reliability }} |
-          Conf: {{ n.confidence }}
-          {% if n.case %} | Case #{{ n.case.id }}{% endif %}
+          SRC: {{ n.source or '—' }} ·
+          REL: {{ n.reliability }} ·
+          CONF: {{ n.confidence }}
+          {% if n.case %} · OP-{{ '%04d'|format(n.case.id) }}{% endif %}
         </small>
       </div>
       <form method="POST" action="{{ url_for('note_delete', nid=n.id) }}" class="inline-del"
-            onsubmit="return confirm('Delete note?');">
+            onsubmit="return confirm('Purge report?');">
         <button class="danger-btn">✕</button>
       </form>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No notes yet.</p>
+  <p class="dim">// No reports filed</p>
   {% endif %}
 </section>
 {% endblock %}

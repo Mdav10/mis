@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Login{% endblock %}
+{% block title %}Authentication{% endblock %}
 {% block content %}
 <div class="login-wrap">
   <div class="login-card">
     <h1>MIS</h1>
     <p class="subtitle">Mugisha's Intelligence System</p>
+    <p class="clearance">◆ CLEARANCE REQUIRED ◆</p>
     <form method="POST" novalidate autocomplete="off">
       {{ form.hidden_tag() }}
       {{ form.username(
-          placeholder="Username",
+          placeholder="AGENT ID",
           autocomplete="username",
           autocapitalize="none",
           autocorrect="off",
@@ -16,7 +17,7 @@
           inputmode="text"
       ) }}
       {{ form.password(
-          placeholder="Password",
+          placeholder="PASSPHRASE",
           autocomplete="current-password"
       ) }}
       {{ form.submit(class_="primary") }}

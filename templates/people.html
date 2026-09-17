@@ -1,42 +1,42 @@
 {% extends "base.html" %}
-{% block title %}People{% endblock %}
+{% block title %}Assets{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> People &amp; Entities</h1>
+<h1>Assets &amp; Persons of Interest</h1>
 
 <section class="card">
-  <h2>Add Entity</h2>
+  <h2>Register New Entity</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Name</label>{{ form.name(placeholder="Name") }}
-    <label>Type</label>{{ form.type() }}
-    <label>Notes</label>{{ form.notes(placeholder="Notes", rows=2) }}
-    <label class="check">{{ form.verified() }} Verified</label>
-    <button class="primary">Save Entity</button>
+    <label>Codename / Name</label>{{ form.name(placeholder="Full name or alias") }}
+    <label>Category</label>{{ form.type() }}
+    <label>Intel Notes</label>{{ form.notes(placeholder="Role, background, threat level...", rows=2) }}
+    <label class="check">{{ form.verified() }} VERIFIED SOURCE</label>
+    <button class="primary">Register</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>All Entities</h2>
+  <h2>Registry</h2>
   {% if people %}
   <ul class="list">
     {% for p in people %}
     <li>
-      <b>{{ p.name }}</b>
-      <span class="badge">{{ p.type }}</span>
+      <b style="color:var(--text)">{{ p.name }}</b>
+      <span class="badge classified">{{ p.type }}</span>
       {% if p.verified %}
-        <span class="badge ok">Verified</span>
+        <span class="badge ok">VERIFIED</span>
       {% else %}
-        <span class="badge warn">Unverified</span>
+        <span class="badge warn">UNVERIFIED</span>
       {% endif %}
       <form method="POST" action="{{ url_for('person_delete', pid=p.id) }}" class="inline-del"
-            onsubmit="return confirm('Delete?');">
+            onsubmit="return confirm('Purge entity?');">
         <button class="danger-btn">✕</button>
       </form>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No entities yet.</p>
+  <p class="dim">// Registry empty</p>
   {% endif %}
 </section>
 {% endblock %}

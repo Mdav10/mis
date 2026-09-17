@@ -1,43 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Evidence{% endblock %}
+{% block title %}Evidence Vault{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Evidence Locker</h1>
+<h1>Evidence Vault</h1>
 
 <section class="card">
-  <h2>Upload Evidence</h2>
-  <p class="dim">Files stored inside PostgreSQL — survive Render restarts.</p>
+  <h2>Secure New Evidence</h2>
+  <p class="dim">Files are stored encrypted-at-rest inside PostgreSQL. SHA-256 hash recorded at intake.</p>
   <form method="POST" enctype="multipart/form-data">
     {{ form.hidden_tag() }}
-    <label>Title</label>{{ form.title(placeholder="Evidence title") }}
-    <label>File</label>{{ form.file() }}
-    <label>Related Case</label>{{ form.case_id() }}
-    <button class="primary">Upload &amp; Hash (SHA-256)</button>
+    <label>Evidence Title</label>{{ form.title(placeholder="Evidence designation") }}
+    <label>Upload File</label>{{ form.file() }}
+    <label>Linked Operation</label>{{ form.case_id() }}
+    <button class="primary">Secure &amp; Hash</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>All Evidence</h2>
+  <h2>Vault Contents</h2>
   {% if evidence %}
   <ul class="list">
     {% for e in evidence %}
     <li>
       <div style="flex:1 1 100%">
-        <b>{{ e.title }}</b><br>
-        <code>{{ e.sha256[:32] }}…</code>
+        <b style="color:var(--amber)">{{ e.title }}</b><br>
+        <code>{{ e.sha256[:40] }}…</code>
       </div>
       {% if e.verified %}
-        <span class="badge ok">Verified</span>
+        <span class="badge ok">SEALED</span>
       {% else %}
         <form method="POST" action="{{ url_for('evidence_verify', eid=e.id) }}">
-          <button class="small">Verify</button>
+          <button class="small">Seal</button>
         </form>
       {% endif %}
-      <a href="{{ url_for('evidence_download', eid=e.id) }}" class="small" style="padding:8px 14px;border-radius:6px;background:#21262d;">Download</a>
+      <a href="{{ url_for('evidence_download', eid=e.id) }}" class="small"
+         style="padding:6px 12px;border:1px solid var(--amber);border-radius:2px;font-size:10px;letter-spacing:1px;">
+        RETRIEVE
+      </a>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No evidence yet.</p>
+  <p class="dim">// Vault empty</p>
   {% endif %}
 </section>
 {% endblock %}

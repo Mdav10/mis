@@ -3,36 +3,39 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0a0e14">
+<meta name="theme-color" content="#0a0a08">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>{% block title %}MIS{% endblock %} · Mugisha's Intelligence System</title>
+<title>{% block title %}MIS{% endblock %} · CLASSIFIED</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
 
 {% if current_user.is_authenticated %}
 {% set active = request.endpoint %}
+
+<div class="classified-banner">◆ TOP SECRET // MIS-ONLY // NOFORN ◆</div>
+
 <header class="topbar">
-  <div class="brand"><strong>MIS</strong><span class="dim">Intelligence System</span></div>
+  <div class="brand">MIS<span class="codename">// INTEL SYS</span></div>
   <nav>
-    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">Home</a>
-    <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">Cases</a>
-    <a href="{{ url_for('people') }}" class="{{ 'active' if active=='people' }}">People</a>
-    <a href="{{ url_for('notes') }}" class="{{ 'active' if active=='notes' }}">Notes</a>
-    <a href="{{ url_for('evidence') }}" class="{{ 'active' if active=='evidence' }}">Evidence</a>
-    <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">Search</a>
-    <a href="{{ url_for('audit_log') }}" class="{{ 'active' if active=='audit_log' }}">Audit</a>
+    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">War Room</a>
+    <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">Operations</a>
+    <a href="{{ url_for('people') }}" class="{{ 'active' if active=='people' }}">Assets</a>
+    <a href="{{ url_for('notes') }}" class="{{ 'active' if active=='notes' }}">Field Reports</a>
+    <a href="{{ url_for('evidence') }}" class="{{ 'active' if active=='evidence' }}">Vault</a>
+    <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">SIGINT</a>
+    <a href="{{ url_for('audit_log') }}" class="{{ 'active' if active=='audit_log' }}">Ops Log</a>
     <a href="{{ url_for('change_password') }}" class="{{ 'active' if active=='change_password' }}">🔑</a>
-    <a href="{{ url_for('logout') }}" class="danger">Logout</a>
   </nav>
+  <div class="agent">AGENT {{ current_user.username|upper }}</div>
 </header>
 {% endif %}
 
 <main class="container">
   {% with msgs = get_flashed_messages(with_categories=true) %}
     {% if msgs %}<div class="flashes">
-      {% for cat,m in msgs %}<div class="flash {{cat}}">{{m}}</div>{% endfor %}
+      {% for cat,m in msgs %}<div class="flash {{cat}}">▸ {{m}}</div>{% endfor %}
     </div>{% endif %}
   {% endwith %}
   {% block content %}{% endblock %}
@@ -41,20 +44,20 @@
 {% if current_user.is_authenticated %}
 <nav class="mobilenav">
   <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">
-    <span class="ico">🏠</span>Home</a>
+    <span class="ico">◉</span>War</a>
   <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}">
-    <span class="ico">📁</span>Cases</a>
+    <span class="ico">◈</span>Ops</a>
   <a href="{{ url_for('notes') }}" class="{{ 'active' if active=='notes' }}">
-    <span class="ico">📝</span>Notes</a>
+    <span class="ico">▤</span>Reports</a>
   <a href="{{ url_for('evidence') }}" class="{{ 'active' if active=='evidence' }}">
-    <span class="ico">📄</span>Evidence</a>
+    <span class="ico">⬢</span>Vault</a>
   <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">
-    <span class="ico">🔎</span>Search</a>
+    <span class="ico">◇</span>SIGINT</a>
 </nav>
 {% endif %}
 
 {% block footer %}
-<footer class="footer">Collect → Verify → Connect → Analyze → Protect → Act</footer>
+<footer class="footer">◆ COLLECT · VERIFY · CONNECT · ANALYZE · PROTECT · ACT ◆</footer>
 {% endblock %}
 </body>
 </html>

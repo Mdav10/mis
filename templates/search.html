@@ -1,22 +1,24 @@
 {% extends "base.html" %}
-{% block title %}Search{% endblock %}
+{% block title %}SIGINT{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Search Intelligence</h1>
+<h1>SIGINT Search</h1>
 
 <section class="card">
+  <h2>Query Database</h2>
   <form method="GET">
-    <input name="q" value="{{ q }}" placeholder="Search notes, people, cases, evidence...">
-    <button class="primary" style="width:100%">Search</button>
+    <input name="q" value="{{ q }}" placeholder="Search across all intel...">
+    <button class="primary" style="width:100%">Execute Query</button>
   </form>
 </section>
 
 {% if q %}
   {% if results.notes %}
   <section class="card">
-    <h2>📝 Notes ({{ results.notes|length }})</h2>
+    <h2>Field Reports · {{ results.notes|length }}</h2>
     <ul class="list">
       {% for n in results.notes %}
-      <li><b>{{ n.title }}</b><br><span class="dim">{{ n.body[:160] }}</span></li>
+      <li><div><b style="color:var(--amber)">{{ n.title }}</b><br>
+        <span class="dim">{{ n.body[:160] }}</span></div></li>
       {% endfor %}
     </ul>
   </section>
@@ -24,10 +26,10 @@
 
   {% if results.people %}
   <section class="card">
-    <h2>👤 Entities ({{ results.people|length }})</h2>
+    <h2>Assets · {{ results.people|length }}</h2>
     <ul class="list">
       {% for p in results.people %}
-      <li><b>{{ p.name }}</b> <span class="badge">{{ p.type }}</span></li>
+      <li><b>{{ p.name }}</b> <span class="badge classified">{{ p.type }}</span></li>
       {% endfor %}
     </ul>
   </section>
@@ -35,10 +37,11 @@
 
   {% if results.cases %}
   <section class="card">
-    <h2>📁 Cases ({{ results.cases|length }})</h2>
+    <h2>Operations · {{ results.cases|length }}</h2>
     <ul class="list">
       {% for c in results.cases %}
-      <li><a href="{{ url_for('case_detail', cid=c.id) }}"><b>#{{ c.id }}</b> {{ c.title }}</a></li>
+      <li><a href="{{ url_for('case_detail', cid=c.id) }}">
+        <b style="color:var(--amber)">OP-{{ '%04d'|format(c.id) }}</b> {{ c.title }}</a></li>
       {% endfor %}
     </ul>
   </section>
@@ -46,7 +49,7 @@
 
   {% if results.evidence %}
   <section class="card">
-    <h2>📄 Evidence ({{ results.evidence|length }})</h2>
+    <h2>Evidence · {{ results.evidence|length }}</h2>
     <ul class="list">
       {% for e in results.evidence %}
       <li><b>{{ e.title }}</b> <code>{{ e.sha256[:16] }}…</code></li>
@@ -56,7 +59,7 @@
   {% endif %}
 
   {% if not (results.notes or results.people or results.cases or results.evidence) %}
-  <section class="card"><p class="dim">No results for "{{ q }}".</p></section>
+  <section class="card"><p class="dim">// No matches for "{{ q }}"</p></section>
   {% endif %}
 {% endif %}
 {% endblock %}

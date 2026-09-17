@@ -1,20 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Audit{% endblock %}
+{% block title %}Ops Log{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Audit Log</h1>
+<h1>Operations Log</h1>
 <section class="card">
   {% if entries %}
   <ul class="timeline">
     {% for a in entries %}
     <li>
-      <span class="dim">{{ a.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</span> —
-      <b>{{ a.action }}</b> {{ a.detail }}
-      <span class="dim">({{ a.actor }})</span>
+      <span class="dim">{{ a.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</span> ·
+      <b style="color:var(--amber)">{{ a.action|upper }}</b>
+      <span style="color:var(--text)">{{ a.detail }}</span>
+      <span class="dim">[{{ a.actor }}]</span>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No audit entries yet.</p>
+  <p class="dim">// No log entries</p>
   {% endif %}
 </section>
 {% endblock %}

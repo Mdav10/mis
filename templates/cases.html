@@ -1,36 +1,39 @@
 {% extends "base.html" %}
-{% block title %}Cases{% endblock %}
+{% block title %}Operations{% endblock %}
 {% block content %}
-<h1><span class="accent">◆</span> Cases</h1>
+<h1>Operations</h1>
 
 <section class="card">
-  <h2>New Case</h2>
+  <h2>New Operation File</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Title</label>{{ form.title(placeholder="Case title") }}
-    <label>Objective</label>{{ form.objective(placeholder="Objective", rows=2) }}
+    <label>Operation Title</label>{{ form.title(placeholder="e.g. PROJECT NIGHTFALL") }}
+    <label>Objective</label>{{ form.objective(placeholder="Primary objective", rows=2) }}
     <label>Status</label>{{ form.status() }}
-    <button class="primary">Create Case</button>
+    <button class="primary">Open File</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>All Cases</h2>
+  <h2>Active Files</h2>
   {% if cases %}
   <ul class="list">
     {% for c in cases %}
     <li>
-      <a href="{{ url_for('case_detail', cid=c.id) }}"><b>#{{ c.id }}</b> {{ c.title }}</a>
-      <span class="badge">{{ c.status }}</span>
+      <a href="{{ url_for('case_detail', cid=c.id) }}">
+        <b style="color:var(--amber)">OP-{{ '%04d'|format(c.id) }}</b>
+        <span style="color:var(--text)">{{ c.title }}</span>
+      </a>
+      <span class="badge classified">{{ c.status }}</span>
       <form method="POST" action="{{ url_for('case_delete', cid=c.id) }}" class="inline-del"
-            onsubmit="return confirm('Delete case?');">
+            onsubmit="return confirm('Purge operation file?');">
         <button class="danger-btn">✕</button>
       </form>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No cases yet.</p>
+  <p class="dim">// No operations on file</p>
   {% endif %}
 </section>
 {% endblock %}
