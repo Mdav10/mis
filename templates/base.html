@@ -9,7 +9,7 @@
 <title>{% block title %}MIS{% endblock %} · Mugisha's Intelligence System</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
 
 {% if current_user.is_authenticated %}
 {% set active = request.endpoint %}
@@ -53,6 +53,8 @@
 </nav>
 {% endif %}
 
+{% block footer %}
 <footer class="footer">Collect → Verify → Connect → Analyze → Protect → Act</footer>
+{% endblock %}
 </body>
 </html>

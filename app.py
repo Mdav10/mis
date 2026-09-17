@@ -1,35 +1,34 @@
 # ============================================================
 # MIS — Mugisha's Intelligence System
-# Single-file Flask application: models + forms + routes + PDF
+# Single-file Flask app: models + forms + routes + PDF crypto
 # ============================================================
 
 import os
 import io
-import base64
 import hashlib
 import secrets
 from datetime import datetime
 
 from flask import (
     Flask, render_template, redirect, url_for, request,
-    flash, send_file, abort, jsonify
+    flash, send_file, abort
 )
 from flask_login import (
-    login_user, logout_user, login_required, current_user
+    LoginManager, UserMixin, login_user, logout_user,
+    login_required, current_user
 )
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired
 from wtforms import (
     StringField, PasswordField, TextAreaField, SelectField,
-    BooleanField, SubmitField, IntegerField
+    BooleanField, SubmitField
 )
 from wtforms.validators import DataRequired, Length, EqualTo, Optional
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
-# ---- PDF + crypto ----
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -49,6 +48,7 @@ load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
     _db = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
@@ -61,7 +61,7 @@ class Config:
         "pool_recycle": 300,
     }
     WTF_CSRF_TIME_LIMIT = None
-    MAX_CONTENT_LENGTH = 40 * 1024 * 1024  # 40 MB upload cap
+    MAX_CONTENT_LENGTH = 40 * 1024 * 1024
     INITIAL_USERNAME = os.getenv("INITIAL_USERNAME", "Mpc")
     INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "08800Mpc!")
 
@@ -74,7 +74,6 @@ app.config.from_object(Config)
 
 db = SQLAlchemy(app)
 
-from flask_login import LoginManager
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Please log in."
@@ -83,7 +82,7 @@ login_manager.login_message = "Please log in."
 # ============================================================
 # MODELS
 # ============================================================
-class User(db.Model):
+class User(UserMixin, db.Model):
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
@@ -91,18 +90,18 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, raw):
-        self.password_hash = generate_password_hash(raw, method="pbkdf2:sha256", salt_length=16)
+        self.password_hash = generate_password_hash(
+            raw, method="pbkdf2:sha256", salt_length=16
+        )
 
     def check_password(self, raw):
-        return check_password_hash(self.password_hash, raw)
-
-    @property
-    def is_authenticated(self): return True
-    @property
-    def is_active(self): return True
-    @property
-    def is_anonymous(self): return False
-    def get_id(self): return str(self.id)
+        h = (self.password_hash or "").strip()
+        if not h or ":" not in h:
+            return False
+        try:
+            return check_password_hash(h, raw)
+        except Exception:
+            return False
 
 
 class Case(db.Model):
@@ -145,7 +144,7 @@ class Evidence(db.Model):
     title = db.Column(db.String(200), nullable=False)
     filename = db.Column(db.String(255))
     mimetype = db.Column(db.String(120), default="application/octet-stream")
-    data = db.Column(db.LargeBinary)          # stored in DB → survives restarts
+    data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64), index=True)
     case_id = db.Column(db.Integer, db.ForeignKey("cases.id"), nullable=True)
     verified = db.Column(db.Boolean, default=False)
@@ -193,15 +192,18 @@ class ChangePasswordForm(FlaskForm):
 class CaseForm(FlaskForm):
     title = StringField("Case Title", validators=[DataRequired(), Length(1, 200)])
     objective = TextAreaField("Objective")
-    status = SelectField("Status", choices=[("Active","Active"),("Review","Review"),("Closed","Closed"),("Archived","Archived")])
+    status = SelectField("Status", choices=[
+        ("Active", "Active"), ("Review", "Review"),
+        ("Closed", "Closed"), ("Archived", "Archived")
+    ])
     submit = SubmitField("Save")
 
 
 class PersonForm(FlaskForm):
     name = StringField("Name", validators=[DataRequired(), Length(1, 200)])
     type = SelectField("Type", choices=[
-        ("Person","Person"),("Organization","Organization"),("Company","Company"),
-        ("Location","Location"),("Event","Event"),("Project","Project"),("Website","Website")
+        ("Person", "Person"), ("Organization", "Organization"), ("Company", "Company"),
+        ("Location", "Location"), ("Event", "Event"), ("Project", "Project"), ("Website", "Website")
     ])
     notes = TextAreaField("Notes")
     verified = BooleanField("Verified")
@@ -212,8 +214,12 @@ class NoteForm(FlaskForm):
     title = StringField("Title", validators=[DataRequired(), Length(1, 200)])
     body = TextAreaField("Body")
     source = StringField("Source", validators=[Optional(), Length(0, 200)])
-    reliability = SelectField("Source Reliability", choices=[("Unknown","Unknown"),("High","High"),("Medium","Medium"),("Low","Low")])
-    confidence = SelectField("Information Confidence", choices=[("Unknown","Unknown"),("High","High"),("Medium","Medium"),("Low","Low")])
+    reliability = SelectField("Source Reliability", choices=[
+        ("Unknown", "Unknown"), ("High", "High"), ("Medium", "Medium"), ("Low", "Low")
+    ])
+    confidence = SelectField("Information Confidence", choices=[
+        ("Unknown", "Unknown"), ("High", "High"), ("Medium", "Medium"), ("Low", "Low")
+    ])
     case_id = SelectField("Related Case", coerce=int, validators=[Optional()])
     submit = SubmitField("Save Note")
 
@@ -249,7 +255,7 @@ def build_case_pdf(case: Case) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm,
+        leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm,
         title=f"MIS Report — Case #{case.id}"
     )
     styles = getSampleStyleSheet()
@@ -260,15 +266,15 @@ def build_case_pdf(case: Case) -> bytes:
     story = []
     story.append(Paragraph("MIS INTELLIGENCE REPORT", h1))
     story.append(Paragraph("Mugisha's Intelligence System", styles["Italic"]))
-    story.append(Spacer(1, 0.5*cm))
+    story.append(Spacer(1, 0.5 * cm))
     story.append(Paragraph(f"Case #{case.id} — {case.title}", h2))
     story.append(Paragraph(f"Status: {case.status}", body))
     story.append(Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", body))
-    story.append(Spacer(1, 0.4*cm))
+    story.append(Spacer(1, 0.4 * cm))
 
     story.append(Paragraph("1. Objective", h2))
     story.append(Paragraph(case.objective or "—", body))
-    story.append(Spacer(1, 0.3*cm))
+    story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("2. Notes", h2))
     if case.notes:
@@ -279,10 +285,10 @@ def build_case_pdf(case: Case) -> bytes:
                 body
             ))
             story.append(Paragraph((n.body or "").replace("\n", "<br/>"), body))
-            story.append(Spacer(1, 0.2*cm))
+            story.append(Spacer(1, 0.2 * cm))
     else:
         story.append(Paragraph("— none —", body))
-    story.append(Spacer(1, 0.3*cm))
+    story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("3. Evidence Register", h2))
     if case.evidence:
@@ -293,21 +299,21 @@ def build_case_pdf(case: Case) -> bytes:
                 (e.sha256 or "")[:20] + "…",
                 "YES" if e.verified else "NO"
             ])
-        t = Table(data, colWidths=[1.2*cm, 7*cm, 6*cm, 2*cm])
+        t = Table(data, colWidths=[1.2 * cm, 7 * cm, 6 * cm, 2 * cm])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1f3a8a")),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-            ("GRID", (0,0), (-1,-1), 0.25, colors.grey),
-            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f3a8a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
         ]))
         story.append(t)
     else:
         story.append(Paragraph("— none —", body))
 
     story.append(PageBreak())
-    story.append(Paragraph("4. Audit Footer", h2))
+    story.append(Paragraph("4. Notes on Encryption", h2))
     story.append(Paragraph(
-        "This document is encrypted with AES-256-GCM. "
+        "This PDF was encrypted with AES-256-GCM. "
         "Decrypt using Mpcipher Tool with the same password used at download.",
         body
     ))
@@ -317,11 +323,11 @@ def build_case_pdf(case: Case) -> bytes:
 
 
 # ============================================================
-# MPC ENCRYPTION (compatible with Mpcipher Tool)
-# Format: b"MIS1" + salt(16) + nonce(12) + ciphertext+tag
+# MPC ENCRYPTION — format: b"MIS1" + salt(16) + nonce(12) + ct+tag
 # ============================================================
 MPC_MAGIC = b"MIS1"
 PBKDF2_ITERATIONS = 200_000
+
 
 def derive_key(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(
@@ -351,12 +357,13 @@ def login():
         return redirect(url_for("dashboard"))
     form = LoginForm()
     if form.validate_on_submit():
-        user = db.session.execute(db.select(User).filter_by(username=form.username.data)).scalar()
+        uname = (form.username.data or "").strip()
+        user = db.session.execute(db.select(User).filter_by(username=uname)).scalar()
         if user and user.check_password(form.password.data):
             login_user(user)
             audit("login_success", f"{user.username} logged in", actor=user.username)
             return redirect(url_for("dashboard"))
-        audit("login_fail", f"Attempt for {form.username.data}")
+        audit("login_fail", f"Attempt for {uname}")
         flash("Invalid credentials.", "error")
     return render_template("login.html", form=form)
 
@@ -451,7 +458,7 @@ def case_delete(cid):
 
 
 # ============================================================
-# ROUTES — ENCRYPTED PDF DOWNLOAD
+# ROUTES — ENCRYPTED PDF
 # ============================================================
 @app.route("/cases/<int:cid>/report", methods=["POST"])
 @login_required
@@ -601,7 +608,9 @@ def search():
     if q:
         like = f"%{q}%"
         results["notes"] = db.session.execute(
-            db.select(Note).where((Note.title.ilike(like)) | (Note.body.ilike(like)) | (Note.source.ilike(like)))
+            db.select(Note).where(
+                (Note.title.ilike(like)) | (Note.body.ilike(like)) | (Note.source.ilike(like))
+            )
         ).scalars().all()
         results["people"] = db.session.execute(
             db.select(Person).where((Person.name.ilike(like)) | (Person.notes.ilike(like)))
@@ -625,14 +634,28 @@ def audit_log():
 
 
 # ============================================================
-# BOOTSTRAP (create tables + seed initial user)
+# BOOTSTRAP
 # ============================================================
 def bootstrap():
     with app.app_context():
         db.create_all()
         u = app.config["INITIAL_USERNAME"]
         p = app.config["INITIAL_PASSWORD"]
+        force = os.getenv("FORCE_SEED", "0") == "1"
+
         existing = db.session.execute(db.select(User).filter_by(username=u)).scalar()
+
+        if force:
+            User.query.delete()
+            db.session.commit()
+            user = User(username=u)
+            user.set_password(p)
+            db.session.add(user)
+            db.session.commit()
+            audit("user_force_seed", f"Force-reseeded user {u}", actor="system")
+            print(f"🔥 Force-reseeded user: {u}")
+            return
+
         if not existing:
             user = User(username=u)
             user.set_password(p)
@@ -640,10 +663,27 @@ def bootstrap():
             db.session.commit()
             audit("user_seed", f"Initial user {u}", actor="system")
             print(f"✅ Seeded user: {u}")
+        else:
+            h = (existing.password_hash or "").strip()
+            if not h or ":" not in h:
+                existing.set_password(p)
+                db.session.commit()
+                print(f"🩹 Repaired broken hash for {u}")
+            else:
+                print(f"✅ User {u} hash OK — untouched")
+
 
 bootstrap()
+
+# Debug print
+with app.app_context():
+    _u = db.session.execute(db.select(User)).scalars().first()
+    if _u:
+        print(f"🔍 DB user={_u.username} hash_prefix={(_u.password_hash or '')[:30]!r}")
+    else:
+        print("🔍 DB has no users")
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)

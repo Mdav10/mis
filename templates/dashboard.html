@@ -1,13 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<h1>Operational Picture</h1>
+<h1><span class="accent">◆</span> Operational Picture</h1>
+
 <div class="stat-grid">
-  <a class="stat-card" href="{{ url_for('cases') }}"><div class="stat-num">{{stats.cases}}</div><div class="stat-label">📁 Cases</div></a>
-  <a class="stat-card" href="{{ url_for('people') }}"><div class="stat-num">{{stats.people}}</div><div class="stat-label">👤 Entities</div></a>
-  <a class="stat-card" href="{{ url_for('notes') }}"><div class="stat-num">{{stats.notes}}</div><div class="stat-label">📝 Notes</div></a>
-  <a class="stat-card" href="{{ url_for('evidence') }}"><div class="stat-num">{{stats.evidence}}</div><div class="stat-label">📄 Evidence</div></a>
+  <a class="stat-card" href="{{ url_for('cases') }}">
+    <div class="stat-num">{{ stats.cases }}</div>
+    <div class="stat-label">📁 Cases</div>
+  </a>
+  <a class="stat-card" href="{{ url_for('people') }}">
+    <div class="stat-num">{{ stats.people }}</div>
+    <div class="stat-label">👤 Entities</div>
+  </a>
+  <a class="stat-card" href="{{ url_for('notes') }}">
+    <div class="stat-num">{{ stats.notes }}</div>
+    <div class="stat-label">📝 Notes</div>
+  </a>
+  <a class="stat-card" href="{{ url_for('evidence') }}">
+    <div class="stat-num">{{ stats.evidence }}</div>
+    <div class="stat-label">📄 Evidence</div>
+  </a>
 </div>
+
 <div class="two-col">
   <section class="card">
     <h2>⚡ Quick Actions</h2>
@@ -19,11 +33,21 @@
       <li><a href="{{ url_for('search') }}">🔎 Search Intelligence</a></li>
     </ul>
   </section>
+
   <section class="card">
     <h2>🕒 Recent Activity</h2>
-    {% if recent %}<ul class="timeline">
-      {% for a in recent %}<li><span class="dim">{{a.created_at.strftime('%Y-%m-%d %H:%M')}}</span> — <b>{{a.action}}</b> {{a.detail}}</li>{% endfor %}
-    </ul>{% else %}<p class="dim">No activity.</p>{% endif %}
+    {% if recent %}
+    <ul class="timeline">
+      {% for a in recent %}
+      <li>
+        <span class="dim">{{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</span> —
+        <b>{{ a.action }}</b> {{ a.detail }}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+      <p class="dim">No activity yet.</p>
+    {% endif %}
   </section>
 </div>
 {% endblock %}

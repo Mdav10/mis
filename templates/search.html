@@ -1,27 +1,62 @@
 {% extends "base.html" %}
 {% block title %}Search{% endblock %}
 {% block content %}
-<h1>🔎 Search Intelligence</h1>
+<h1><span class="accent">◆</span> Search Intelligence</h1>
+
 <section class="card">
-  <form method="GET" class="inline">
-    <input name="q" value="{{q}}" placeholder="Search everything...">
-    <button class="primary">Search</button>
+  <form method="GET">
+    <input name="q" value="{{ q }}" placeholder="Search notes, people, cases, evidence...">
+    <button class="primary" style="width:100%">Search</button>
   </form>
 </section>
 
-{% macro block(title, items, render) %}
-  {% if items %}<section class="card"><h2>{{title}} ({{items|length}})</h2>
-    <ul class="list">{% for i in items %}<li>{{ render(i)|safe }}</li>{% endfor %}</ul>
-  </section>{% endif %}
-{% endmacro %}
-
 {% if q %}
-  {{ block('📝 Notes', results.notes, (lambda n: '<b>' ~ n.title ~ '</b><br><span class="dim">' ~ n.body[:160] ~ '</span>')) }}
-  {{ block('👤 Entities', results.people, (lambda p: '<b>' ~ p.name ~ '</b> <span class="badge">' ~ p.type ~ '</span>')) }}
-  {{ block('📁 Cases', results.cases, (lambda c: '<a href="' ~ url_for('case_detail', cid=c.id) ~ '"><b>#' ~ c.id ~ '</b> ' ~ c.title ~ '</a>')) }}
-  {{ block('📄 Evidence', results.evidence, (lambda e: '<b>' ~ e.title ~ '</b> <code>' ~ e.sha256[:16] ~ '…</code>')) }}
+  {% if results.notes %}
+  <section class="card">
+    <h2>📝 Notes ({{ results.notes|length }})</h2>
+    <ul class="list">
+      {% for n in results.notes %}
+      <li><b>{{ n.title }}</b><br><span class="dim">{{ n.body[:160] }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if results.people %}
+  <section class="card">
+    <h2>👤 Entities ({{ results.people|length }})</h2>
+    <ul class="list">
+      {% for p in results.people %}
+      <li><b>{{ p.name }}</b> <span class="badge">{{ p.type }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if results.cases %}
+  <section class="card">
+    <h2>📁 Cases ({{ results.cases|length }})</h2>
+    <ul class="list">
+      {% for c in results.cases %}
+      <li><a href="{{ url_for('case_detail', cid=c.id) }}"><b>#{{ c.id }}</b> {{ c.title }}</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if results.evidence %}
+  <section class="card">
+    <h2>📄 Evidence ({{ results.evidence|length }})</h2>
+    <ul class="list">
+      {% for e in results.evidence %}
+      <li><b>{{ e.title }}</b> <code>{{ e.sha256[:16] }}…</code></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if not (results.notes or results.people or results.cases or results.evidence) %}
-    <p class="dim">No results.</p>
+  <section class="card"><p class="dim">No results for "{{ q }}".</p></section>
   {% endif %}
 {% endif %}
 {% endblock %}

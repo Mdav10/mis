@@ -5,12 +5,23 @@
   <div class="login-card">
     <h1>MIS</h1>
     <p class="subtitle">Mugisha's Intelligence System</p>
-    <form method="POST" novalidate>
+    <form method="POST" novalidate autocomplete="off">
       {{ form.hidden_tag() }}
-      {{ form.username(placeholder="Username", autocomplete="username") }}
-      {{ form.password(placeholder="Password", autocomplete="current-password") }}
+      {{ form.username(
+          placeholder="Username",
+          autocomplete="username",
+          autocapitalize="none",
+          autocorrect="off",
+          spellcheck="false",
+          inputmode="text"
+      ) }}
+      {{ form.password(
+          placeholder="Password",
+          autocomplete="current-password"
+      ) }}
       {{ form.submit(class_="primary") }}
     </form>
   </div>
 </div>
 {% endblock %}
+{% block footer %}{% endblock %}
