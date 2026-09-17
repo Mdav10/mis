@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Briefing{% endblock %}
+{% block content %}
+<h1>Daily Briefing</h1>
+
+<section class="card">
+  <h2>Window</h2>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a class="badge {{ 'ok' if days==1 }}" href="{{ url_for('briefing', days=1) }}">LAST 24H</a>
+    <a class="badge {{ 'ok' if days==7 }}" href="{{ url_for('briefing', days=7) }}">LAST 7 DAYS</a>
+    <a class="badge {{ 'ok' if days==30 }}" href="{{ url_for('briefing', days=30) }}">LAST 30 DAYS</a>
+  </div>
+  <p class="dim" style="margin-top:12px;">Since: {{ since.strftime('%Y-%m-%d %H:%M') }} UTC</p>
+</section>
+
+<section class="card highlight">
+  <h2>Encrypted Export</h2>
+  <form method="POST" action="{{ url_for('briefing_pdf') }}">
+    <input type="hidden" name="days" value="{{ days }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input name="password" type="password" placeholder="TRANSMISSION PASSPHRASE" required minlength="6">
+    <button class="primary">Download Encrypted Briefing</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>◈ Cases Opened · {{ cases|length }}</h2>
+  {% if cases %}<ul class="list">
+    {% for c in cases %}<li><a href="{{ url_for('case_detail', cid=c.id) }}">
+      <b style="color:var(--amber)">OP-{{ '%04d'|format(c.id) }}</b> {{ c.title }}</a>
+      <span class="badge warn">{{ c.threat_level }}</span></li>{% endfor %}
+  </ul>{% else %}<p class="dim">// none</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>▤ Intel Filed · {{ intel|length }}</h2>
+  {% if intel %}<ul class="list">
+    {% for i in intel %}<li><b style="color:var(--amber)">{{ i.title }}</b>
+      <span class="badge">{{ i.status }}</span>
+      <span class="dim">src {{ i.source_reliability }}{{ i.info_confidence }}</span></li>{% endfor %}
+  </ul>{% else %}<p class="dim">// none</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>⬢ Media Secured · {{ media|length }}</h2>
+  {% if media %}<ul class="list">
+    {% for m in media %}<li><b>#{{ m.id }} {{ m.title }}</b>
+      <span class="badge">{{ m.kind }}</span>
+      <code>{{ m.sha256[:20] }}…</code></li>{% endfor %}
+  </ul>{% else %}<p class="dim">// none</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>◍ New Entities · {{ entities|length }}</h2>
+  {% if entities %}<ul class="list">
+    {% for e in entities %}<li><b>{{ e.name }}</b>
+      <span class="badge classified">{{ e.type }}</span></li>{% endfor %}
+  </ul>{% else %}<p class="dim">// none</p>{% endif %}
+</section>
+{% endblock %}

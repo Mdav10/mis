@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Agents{% endblock %}
+{% block content %}
+<h1>Agent Registry</h1>
+
+<section class="card">
+  <h2>Register New Agent</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Agent ID</label>{{ form.username(placeholder="agent.id") }}
+    <label>Passphrase</label>{{ form.password(placeholder="min 8 chars") }}
+    <label>Codename</label>{{ form.codename(placeholder="e.g. NIGHTHAWK") }}
+    <label>Clearance</label>{{ form.clearance() }}
+    <button class="primary">Register Agent</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Active Agents</h2>
+  <ul class="list">
+    {% for a in agents %}
+    <li>
+      <div style="flex:1 1 100%">
+        <b style="color:var(--amber)">{{ a.username|upper }}</b>
+        {% if a.codename %}<span class="badge classified">{{ a.codename }}</span>{% endif %}
+        <span class="badge ok">{{ a.clearance }}</span>
+        {% if a.id == current_user.id %}<span class="badge">YOU</span>{% endif %}
+        <div class="dim">Registered {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+      </div>
+      {% if a.id != current_user.id %}
+      <form method="POST" action="{{ url_for('agent_delete', uid=a.id) }}"
+            onsubmit="return confirm('Remove agent?');"><button class="danger-btn">✕</button></form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

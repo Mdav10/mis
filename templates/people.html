@@ -1,16 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Assets{% endblock %}
+{% block title %}Entities{% endblock %}
 {% block content %}
-<h1>Assets &amp; Persons of Interest</h1>
+<h1>Entities</h1>
 
 <section class="card">
   <h2>Register New Entity</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Codename / Name</label>{{ form.name(placeholder="Full name or alias") }}
-    <label>Category</label>{{ form.type() }}
-    <label>Intel Notes</label>{{ form.notes(placeholder="Role, background, threat level...", rows=2) }}
-    <label class="check">{{ form.verified() }} VERIFIED SOURCE</label>
+    <label>Name / Codename</label>{{ form.name() }}
+    <div class="row">
+      <div><label>Type</label>{{ form.type() }}</div>
+      <div><label>Threat Level</label>{{ form.threat_level() }}</div>
+      <div><label>Region</label>{{ form.region() }}</div>
+    </div>
+    <label>Notes</label>{{ form.notes(rows=2) }}
+    <label class="check">{{ form.verified() }} Verified</label>
     <button class="primary">Register</button>
   </form>
 </section>
@@ -21,22 +25,22 @@
   <ul class="list">
     {% for p in people %}
     <li>
-      <b style="color:var(--text)">{{ p.name }}</b>
-      <span class="badge classified">{{ p.type }}</span>
-      {% if p.verified %}
-        <span class="badge ok">VERIFIED</span>
-      {% else %}
-        <span class="badge warn">UNVERIFIED</span>
-      {% endif %}
-      <form method="POST" action="{{ url_for('person_delete', pid=p.id) }}" class="inline-del"
-            onsubmit="return confirm('Purge entity?');">
+      <div style="flex:1 1 100%">
+        <a href="{{ url_for('entity_detail', eid=p.id) }}">
+          <b style="color:var(--amber)">{{ p.name }}</b>
+        </a>
+        <span class="badge classified">{{ p.type }}</span>
+        <span class="badge {{ 'ok' if p.verified else 'warn' }}">{{ 'VERIFIED' if p.verified else 'UNVERIFIED' }}</span>
+        <span class="badge">{{ p.threat_level }}</span>
+        {% if p.region and p.region != '—' %}<span class="dim">◍ {{ p.region }}</span>{% endif %}
+      </div>
+      <form method="POST" action="{{ url_for('entity_delete', eid=p.id) }}" class="inline-del"
+            onsubmit="return confirm('Delete entity?');">
         <button class="danger-btn">✕</button>
       </form>
     </li>
     {% endfor %}
   </ul>
-  {% else %}
-  <p class="dim">// Registry empty</p>
-  {% endif %}
+  {% else %}<p class="dim">// Registry empty</p>{% endif %}
 </section>
 {% endblock %}

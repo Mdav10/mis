@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Threat Board{% endblock %}
+{% block content %}
+<h1>Threat Board</h1>
+
+{% macro board(title, items, color) %}
+<section class="card" style="border-left:3px solid {{ color }}">
+  <h2 style="color:{{ color }}">{{ title }} · {{ items|length }}</h2>
+  {% if items %}
+  <ul class="list">
+    {% for c in items %}
+    <li>
+      <a href="{{ url_for('case_detail', cid=c.id) }}" style="flex:1 1 100%">
+        <b style="color:{{ color }}">P{{ c.priority }} · OP-{{ '%04d'|format(c.id) }}</b>
+        <span style="color:var(--text)">{{ c.title }}</span>
+        {% if c.due_date %}<div class="dim">Due: {{ c.due_date.strftime('%Y-%m-%d %H:%M') }}</div>{% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">// Clear</p>{% endif %}
+</section>
+{% endmacro %}
+
+{{ board('CRITICAL', groups.CRITICAL, '#ff3b30') }}
+{{ board('HIGH',     groups.HIGH,     '#ff7b00') }}
+{{ board('MEDIUM',   groups.MEDIUM,   '#ffb000') }}
+{{ board('LOW',      groups.LOW,      '#3fb950') }}
+{% endblock %}

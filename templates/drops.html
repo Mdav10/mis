@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Dead Drops{% endblock %}
+{% block content %}
+<h1>Dead Drops</h1>
+
+<section class="card">
+  <h2>Seal New Drop</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Title</label>{{ form.title() }}
+    <label>Body</label>{{ form.body(rows=4) }}
+    <div class="row">
+      <div><label>Unlock At</label>{{ form.unlock_at(placeholder="YYYY-MM-DD HH:MM") }}</div>
+      <div><label>Classification</label>{{ form.classification() }}</div>
+      <div></div>
+    </div>
+    <button class="primary">Seal Drop</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Sealed Drops</h2>
+  {% if drops %}
+  <ul class="list">
+    {% for d in drops %}
+    <li style="flex-direction:column;align-items:flex-start;gap:6px;">
+      <div style="width:100%">
+        <b style="color:var(--amber)">{{ d.title }}</b>
+        <span class="badge classified">{{ d.classification }}</span>
+        {% if d.is_unlocked %}<span class="badge ok">UNLOCKED</span>
+        {% else %}<span class="badge warn">{{ d.countdown }}</span>{% endif %}
+      </div>
+      <div class="dim">Unlocks {{ d.unlock_at.strftime('%Y-%m-%d %H:%M') }} UTC</div>
+      {% if d.is_unlocked %}
+        <div style="background:#000;border:1px solid var(--border);padding:10px;width:100%;white-space:pre-wrap;">{{ d.body }}</div>
+      {% else %}
+        <div style="background:#000;border:1px dashed var(--border);padding:10px;width:100%;text-align:center;color:var(--text-mute);letter-spacing:3px;">
+          ▓▓▓ SEALED UNTIL {{ d.unlock_at.strftime('%Y-%m-%d %H:%M') }} ▓▓▓
+        </div>
+      {% endif %}
+      <form method="POST" action="{{ url_for('drop_delete', did=d.id) }}"
+            onsubmit="return confirm('Destroy drop?');" style="margin-left:auto;">
+        <button class="danger-btn">✕</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">// No drops sealed</p>{% endif %}
+</section>
+{% endblock %}

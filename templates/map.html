@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Field Map{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  #map { height: 62vh; min-height: 420px; border: 1px solid var(--border); background: #000; }
+  .leaflet-container { background: #0a0a08 !important; }
+  .leaflet-tile { filter: brightness(0.6) contrast(1.3) hue-rotate(160deg); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: var(--panel); color: var(--text); border: 1px solid var(--amber-dim);
+    border-radius: 2px; font-family: var(--mono);
+  }
+  .leaflet-popup-content { font-size: 12px; }
+  .leaflet-control-attribution { background: #000 !important; color: var(--text-mute) !important; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Field Map</h1>
+
+<section class="card">
+  <h2>Entities by Region · {{ markers|length }}</h2>
+  <div id="map"></div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const markers = {{ markers|tojson }};
+  const map = L.map('map').setView([10, 20], 2);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap · © CARTO',
+    subdomains: 'abcd', maxZoom: 19
+  }).addTo(map);
+
+  markers.forEach(m => {
+    L.circleMarker([m.lat, m.lng], {
+      radius: 7, color: m.color, fillColor: m.color,
+      fillOpacity: 0.7, weight: 2
+    }).addTo(map).bindPopup(
+      `<b style="color:${m.color}">${m.name}</b><br>
+       <span style="color:#8a8577">${m.type} · ${m.threat}</span><br>
+       <span style="color:#5a564c">◍ ${m.region}</span><br>
+       <a href="/entities/${m.id}">Open profile →</a>`
+    );
+  });
+
+  if (!markers.length) {
+    document.getElementById('map').innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#5a564c;letter-spacing:2px;">// NO GEOLOCATED ENTITIES</div>';
+  }
+</script>
+{% endblock %}

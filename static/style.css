@@ -538,3 +538,16 @@ body.logged-in::after {
   opacity: 0.3;
   mix-blend-mode: overlay;
 }
+
+
+/* v2 badges */
+.badge[style*="#ff3b30"] { background: #ff3b3011; }
+.badge[style*="#ff7b00"] { background: #ff7b0011; }
+.badge[style*="#ffb000"] { background: #ffb00011; }
+.badge[style*="#3fb950"] { background: #3fb95011; }
+
+.badge.warn { animation: dropPulse 1.6s infinite; }
+@keyframes dropPulse {
+  0%,100% { box-shadow: 0 0 0 0 #ff3b3000; }
+  50%     { box-shadow: 0 0 12px -2px #ff3b3066; }
+}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Unlock Media{% endblock %}
+{% block content %}
+<h1>⬢ Unlock Encrypted Media</h1>
+
+<section class="card narrow">
+  <h2>#{{ media.id }} — {{ media.title }}</h2>
+  <p class="dim">This media is encrypted. Enter the passphrase used at upload.</p>
+  <form method="GET" action="{{ url_for('media_view', mid=media.id) }}">
+    <input name="pw" type="password" placeholder="DECRYPTION PASSPHRASE" required>
+    <button class="primary" style="width:100%">Unlock</button>
+  </form>
+  <p class="dim" style="margin-top:10px;">SHA-256: <code>{{ media.sha256[:40] }}…</code></p>
+</section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Graph{% endblock %}
+{% block content %}
+<h1>Relationship Graph</h1>
+
+<section class="card">
+  <h2>Record New Relationship</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <div class="row">
+      <div><label>From</label>{{ form.from_id() }}</div>
+      <div><label>Relation</label>{{ form.relation() }}</div>
+      <div><label>To</label>{{ form.to_id() }}</div>
+    </div>
+    <label>Description</label>{{ form.description(rows=2) }}
+    <label>Status</label>{{ form.status() }}
+    <button class="primary">Record</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>All Edges</h2>
+  {% if relationships %}
+  <ul class="list">
+    {% for r in relationships %}
+    <li>
+      <div style="flex:1 1 100%">
+        <a href="{{ url_for('entity_detail', eid=r.from_entity.id) }}"><b style="color:var(--amber)">{{ r.from_entity.name }}</b></a>
+        <span class="badge classified">{{ r.relation }}</span>
+        <a href="{{ url_for('entity_detail', eid=r.to_entity.id) }}"><b>{{ r.to_entity.name }}</b></a>
+        <span class="badge {{ 'ok' if r.status=='VERIFIED' else 'warn' if r.status in ['DISPUTED','FALSE'] else '' }}">{{ r.status }}</span>
+        {% if r.description %}<div class="dim">{{ r.description }}</div>{% endif %}
+      </div>
+      <form method="POST" action="{{ url_for('relationship_delete', rid=r.id) }}"
+            onsubmit="return confirm('Delete?');"><button class="danger-btn">✕</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">// No relationships recorded</p>{% endif %}
+</section>
+{% endblock %}

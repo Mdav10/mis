@@ -1,54 +1,77 @@
 {% extends "base.html" %}
 {% block title %}War Room{% endblock %}
 {% block content %}
-<h1>War Room <span class="accent">▮</span></h1>
+<h1>War Room</h1>
 
 <div class="stat-grid">
-  <a class="stat-card" href="{{ url_for('cases') }}">
-    <div class="stat-num">{{ '%03d'|format(stats.cases) }}</div>
-    <div class="stat-label">◈ Operations</div>
-  </a>
-  <a class="stat-card" href="{{ url_for('people') }}">
-    <div class="stat-num">{{ '%03d'|format(stats.people) }}</div>
-    <div class="stat-label">◉ Assets</div>
-  </a>
-  <a class="stat-card" href="{{ url_for('notes') }}">
-    <div class="stat-num">{{ '%03d'|format(stats.notes) }}</div>
-    <div class="stat-label">▤ Reports</div>
-  </a>
-  <a class="stat-card" href="{{ url_for('evidence') }}">
-    <div class="stat-num">{{ '%03d'|format(stats.evidence) }}</div>
-    <div class="stat-label">⬢ Vault</div>
-  </a>
+  <a class="stat-card" href="{{ url_for('cases') }}"><div class="stat-num">{{ '%03d'|format(stats.cases) }}</div><div class="stat-label">◈ Cases</div></a>
+  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.timeline) }}</div><div class="stat-label">◷ Timeline</div></a>
+  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.intel) }}</div><div class="stat-label">▤ Intel</div></a>
+  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.media) }}</div><div class="stat-label">⬢ Media</div></a>
+  <a class="stat-card" href="{{ url_for('entities') }}"><div class="stat-num">{{ '%03d'|format(stats.entities) }}</div><div class="stat-label">◍ Entities</div></a>
+  <a class="stat-card" href="{{ url_for('dashboard') }}"><div class="stat-num">{{ '%03d'|format(stats.analyst) }}</div><div class="stat-label">▣ Analyst</div></a>
+  <a class="stat-card" href="{{ url_for('agents') }}"><div class="stat-num">{{ '%03d'|format(stats.agents) }}</div><div class="stat-label">◆ Agents</div></a>
+  <a class="stat-card" href="{{ url_for('drops') }}"><div class="stat-num">{{ '%03d'|format(stats.drops) }}</div><div class="stat-label">✉ Drops</div></a>
 </div>
 
 <div class="two-col">
   <section class="card">
-    <h2>Quick Directives</h2>
-    <ul class="quick">
-      <li><a href="{{ url_for('cases') }}">Launch New Operation</a></li>
-      <li><a href="{{ url_for('people') }}">Register Asset / POI</a></li>
-      <li><a href="{{ url_for('notes') }}">Log Field Report</a></li>
-      <li><a href="{{ url_for('evidence') }}">Secure Evidence</a></li>
-      <li><a href="{{ url_for('search') }}">SIGINT Query</a></li>
-    </ul>
-  </section>
-
-  <section class="card">
-    <h2>Operations Log — Live Feed</h2>
-    {% if recent %}
-    <ul class="timeline">
-      {% for a in recent %}
+    <h2>Priority Cases</h2>
+    {% if threat_ops %}
+    <ul class="list">
+      {% for c in threat_ops %}
       <li>
-        <span class="dim">{{ a.created_at.strftime('%H:%M:%S') }}</span>
-        <b style="color:var(--amber)">{{ a.action|upper }}</b>
-        <span class="dim">{{ a.detail }}</span>
+        <a href="{{ url_for('case_detail', cid=c.id) }}" style="flex:1 1 100%">
+          <b style="color:var(--amber)">P{{ c.priority }} · OP-{{ '%04d'|format(c.id) }}</b>
+          <span style="color:var(--text)">{{ c.title }}</span>
+        </a>
+        <span class="badge">{{ c.threat_level }}</span>
       </li>
       {% endfor %}
     </ul>
-    {% else %}
-      <p class="dim">// No recent activity</p>
-    {% endif %}
+    {% else %}<p class="dim">// No active cases</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Quick Directives</h2>
+    <ul class="quick">
+      <li><a href="{{ url_for('cases') }}">Open New Case File</a></li>
+      <li><a href="{{ url_for('entities') }}">Register Entity</a></li>
+      <li><a href="{{ url_for('sources') }}">Log Source</a></li>
+      <li><a href="{{ url_for('relationships') }}">Record Relationship</a></li>
+      <li><a href="{{ url_for('drops') }}">Seal Dead Drop</a></li>
+      <li><a href="{{ url_for('briefing') }}">Generate Briefing</a></li>
+    </ul>
   </section>
 </div>
+
+{% if drops %}
+<section class="card">
+  <h2>Pending Dead Drops</h2>
+  <ul class="list">
+    {% for d in drops %}
+    <li>
+      <div style="flex:1 1 100%">
+        <b style="color:var(--amber)">{{ d.title }}</b>
+        <div class="dim">Unlocks {{ d.unlock_at.strftime('%Y-%m-%d %H:%M') }}</div>
+      </div>
+      <span class="badge warn">{{ d.countdown }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Operations Log</h2>
+  {% if recent %}
+  <ul class="timeline">
+    {% for a in recent %}
+    <li><span class="dim">{{ a.created_at.strftime('%H:%M:%S') }}</span>
+      <b style="color:var(--amber)">{{ a.action|upper }}</b>
+      <span class="dim">{{ a.detail }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">// No activity</p>{% endif %}
+</section>
 {% endblock %}

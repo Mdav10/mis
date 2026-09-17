@@ -4,61 +4,73 @@
 <h1>SIGINT Search</h1>
 
 <section class="card">
-  <h2>Query Database</h2>
+  <h2>Query</h2>
   <form method="GET">
-    <input name="q" value="{{ q }}" placeholder="Search across all intel...">
+    <input name="q" value="{{ q }}" placeholder="Search intel, entities, cases, media, timeline...">
     <button class="primary" style="width:100%">Execute Query</button>
   </form>
 </section>
 
 {% if q %}
-  {% if results.notes %}
-  <section class="card">
-    <h2>Field Reports · {{ results.notes|length }}</h2>
-    <ul class="list">
-      {% for n in results.notes %}
-      <li><div><b style="color:var(--amber)">{{ n.title }}</b><br>
-        <span class="dim">{{ n.body[:160] }}</span></div></li>
-      {% endfor %}
-    </ul>
-  </section>
-  {% endif %}
-
-  {% if results.people %}
-  <section class="card">
-    <h2>Assets · {{ results.people|length }}</h2>
-    <ul class="list">
-      {% for p in results.people %}
-      <li><b>{{ p.name }}</b> <span class="badge classified">{{ p.type }}</span></li>
-      {% endfor %}
-    </ul>
-  </section>
-  {% endif %}
-
   {% if results.cases %}
   <section class="card">
-    <h2>Operations · {{ results.cases|length }}</h2>
+    <h2>Cases · {{ results.cases|length }}</h2>
     <ul class="list">
       {% for c in results.cases %}
-      <li><a href="{{ url_for('case_detail', cid=c.id) }}">
-        <b style="color:var(--amber)">OP-{{ '%04d'|format(c.id) }}</b> {{ c.title }}</a></li>
+      <li><a href="{{ url_for('case_detail', cid=c.id) }}"><b style="color:var(--amber)">OP-{{ '%04d'|format(c.id) }}</b> {{ c.title }}</a></li>
       {% endfor %}
     </ul>
   </section>
   {% endif %}
 
-  {% if results.evidence %}
+  {% if results.intel %}
   <section class="card">
-    <h2>Evidence · {{ results.evidence|length }}</h2>
+    <h2>Intel · {{ results.intel|length }}</h2>
     <ul class="list">
-      {% for e in results.evidence %}
-      <li><b>{{ e.title }}</b> <code>{{ e.sha256[:16] }}…</code></li>
+      {% for i in results.intel %}
+      <li><b style="color:var(--amber)">{{ i.title }}</b>
+        <span class="badge">{{ i.status }}</span>
+        <div class="dim">{{ i.body[:160] }}</div></li>
       {% endfor %}
     </ul>
   </section>
   {% endif %}
 
-  {% if not (results.notes or results.people or results.cases or results.evidence) %}
+  {% if results.entities %}
+  <section class="card">
+    <h2>Entities · {{ results.entities|length }}</h2>
+    <ul class="list">
+      {% for e in results.entities %}
+      <li><a href="{{ url_for('entity_detail', eid=e.id) }}"><b>{{ e.name }}</b></a>
+        <span class="badge classified">{{ e.type }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if results.media %}
+  <section class="card">
+    <h2>Media · {{ results.media|length }}</h2>
+    <ul class="list">
+      {% for m in results.media %}
+      <li><b>#{{ m.id }} {{ m.title }}</b> <span class="badge">{{ m.kind }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if results.timeline %}
+  <section class="card">
+    <h2>Timeline · {{ results.timeline|length }}</h2>
+    <ul class="list">
+      {% for t in results.timeline %}
+      <li><b style="color:var(--amber)">{{ t.event_at.strftime('%Y-%m-%d') }}</b> {{ t.title }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if not (results.cases or results.intel or results.entities or results.media or results.timeline) %}
   <section class="card"><p class="dim">// No matches for "{{ q }}"</p></section>
   {% endif %}
 {% endif %}
