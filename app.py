@@ -69,6 +69,14 @@ class Config:
 
 app = Flask(__name__)
 app.config.from_object(Config)
+
+# make csrf_token available to all templates
+from flask_wtf.csrf import generate_csrf
+
+@app.context_processor
+def _inject_csrf():
+    return {"csrf_token": generate_csrf}
+
 db = SQLAlchemy(app)
 
 login_manager = LoginManager(app)
