@@ -1,7 +1,5 @@
 # ============================================================
-# MIS v2 — Case-Centric Intelligence Platform
-# Timeline Entry → Intelligence / Media / Entities / Sources
-# Analyst View · Relationships · Real Media Encryption
+# MIS v2 — Case-Centric Intelligence Platform (auto-migrating)
 # ============================================================
 
 import os
@@ -29,7 +27,7 @@ from wtforms.validators import DataRequired, Length, EqualTo, Optional
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, text, inspect
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -99,88 +97,57 @@ CLASSIFICATIONS = [
 ]
 
 THREAT_LEVELS = [
-    ("LOW", "LOW"),
-    ("MEDIUM", "MEDIUM"),
-    ("HIGH", "HIGH"),
-    ("CRITICAL", "CRITICAL"),
+    ("LOW", "LOW"), ("MEDIUM", "MEDIUM"),
+    ("HIGH", "HIGH"), ("CRITICAL", "CRITICAL"),
 ]
 
-# NATO-style source reliability (A = fully reliable, F = cannot be judged)
 SOURCE_RELIABILITY = [
-    ("A", "A — Completely reliable"),
-    ("B", "B — Usually reliable"),
-    ("C", "C — Fairly reliable"),
-    ("D", "D — Not usually reliable"),
-    ("E", "E — Unreliable"),
-    ("F", "F — Cannot be judged"),
+    ("A", "A — Completely reliable"), ("B", "B — Usually reliable"),
+    ("C", "C — Fairly reliable"), ("D", "D — Not usually reliable"),
+    ("E", "E — Unreliable"), ("F", "F — Cannot be judged"),
 ]
 
 INFO_CONFIDENCE = [
-    ("1", "1 — Confirmed by other sources"),
-    ("2", "2 — Probably true"),
-    ("3", "3 — Possibly true"),
-    ("4", "4 — Doubtful"),
-    ("5", "5 — Improbable"),
-    ("6", "6 — Cannot be judged"),
+    ("1", "1 — Confirmed"), ("2", "2 — Probably true"),
+    ("3", "3 — Possibly true"), ("4", "4 — Doubtful"),
+    ("5", "5 — Improbable"), ("6", "6 — Cannot be judged"),
 ]
 
 INTEL_STATUS = [
-    ("UNVERIFIED", "UNVERIFIED"),
-    ("CORROBORATED", "CORROBORATED"),
-    ("VERIFIED", "VERIFIED"),
-    ("DISPUTED", "DISPUTED"),
-    ("FALSE", "FALSE"),
+    ("UNVERIFIED", "UNVERIFIED"), ("CORROBORATED", "CORROBORATED"),
+    ("VERIFIED", "VERIFIED"), ("DISPUTED", "DISPUTED"), ("FALSE", "FALSE"),
 ]
 
 INTEL_CATEGORIES = [
-    ("OBSERVATION", "OBSERVATION"),
-    ("SOURCE_REPORT", "SOURCE REPORT"),
-    ("DOCUMENT", "DOCUMENT"),
-    ("IMAGE_ANALYSIS", "IMAGE ANALYSIS"),
-    ("AUDIO_ANALYSIS", "AUDIO ANALYSIS"),
-    ("MEETING", "MEETING"),
-    ("MOVEMENT", "MOVEMENT"),
-    ("COMMUNICATION", "COMMUNICATION"),
+    ("OBSERVATION", "OBSERVATION"), ("SOURCE_REPORT", "SOURCE REPORT"),
+    ("DOCUMENT", "DOCUMENT"), ("IMAGE_ANALYSIS", "IMAGE ANALYSIS"),
+    ("AUDIO_ANALYSIS", "AUDIO ANALYSIS"), ("MEETING", "MEETING"),
+    ("MOVEMENT", "MOVEMENT"), ("COMMUNICATION", "COMMUNICATION"),
     ("OTHER", "OTHER"),
 ]
 
 ANALYST_CATEGORIES = [
-    ("FACT", "FACT"),
-    ("CLAIM", "CLAIM"),
-    ("CORROBORATED", "CORROBORATED"),
-    ("UNVERIFIED", "UNVERIFIED"),
-    ("ASSESSMENT", "ANALYTIC ASSESSMENT"),
-    ("QUESTION", "OPEN QUESTION"),
-    ("CONTRADICTION", "CONTRADICTION"),
+    ("FACT", "FACT"), ("CLAIM", "CLAIM"), ("CORROBORATED", "CORROBORATED"),
+    ("UNVERIFIED", "UNVERIFIED"), ("ASSESSMENT", "ANALYTIC ASSESSMENT"),
+    ("QUESTION", "OPEN QUESTION"), ("CONTRADICTION", "CONTRADICTION"),
 ]
 
 RELATION_TYPES = [
-    ("associated_with", "associated with"),
-    ("family_of", "family of"),
-    ("works_for", "works for"),
-    ("member_of", "member of"),
-    ("owns", "owns"),
-    ("located_at", "located at"),
-    ("met_with", "met with"),
-    ("communicated_with", "communicated with"),
-    ("seen_with", "seen with"),
-    ("suspects", "suspected of involvement with"),
-    ("witness_of", "witness of"),
-    ("other", "other"),
+    ("associated_with", "associated with"), ("family_of", "family of"),
+    ("works_for", "works for"), ("member_of", "member of"),
+    ("owns", "owns"), ("located_at", "located at"),
+    ("met_with", "met with"), ("communicated_with", "communicated with"),
+    ("seen_with", "seen with"), ("suspects", "suspected of involvement with"),
+    ("witness_of", "witness of"), ("other", "other"),
 ]
 
 REGIONS = [
     ("—", 0, 0),
-    ("Kampala, UG", 0.3476, 32.5825),
-    ("Nairobi, KE", -1.2921, 36.8219),
-    ("Dar es Salaam, TZ", -6.7924, 39.2083),
-    ("Kigali, RW", -1.9441, 30.0619),
-    ("Addis Ababa, ET", 9.0300, 38.7400),
-    ("Cairo, EG", 30.0444, 31.2357),
-    ("Lagos, NG", 6.5244, 3.3792),
-    ("Johannesburg, ZA", -26.2041, 28.0473),
-    ("London, UK", 51.5074, -0.1278),
-    ("Dubai, AE", 25.2048, 55.2708),
+    ("Kampala, UG", 0.3476, 32.5825), ("Nairobi, KE", -1.2921, 36.8219),
+    ("Dar es Salaam, TZ", -6.7924, 39.2083), ("Kigali, RW", -1.9441, 30.0619),
+    ("Addis Ababa, ET", 9.0300, 38.7400), ("Cairo, EG", 30.0444, 31.2357),
+    ("Lagos, NG", 6.5244, 3.3792), ("Johannesburg, ZA", -26.2041, 28.0473),
+    ("London, UK", 51.5074, -0.1278), ("Dubai, AE", 25.2048, 55.2708),
     ("Washington DC, US", 38.9072, -77.0369),
     ("Langley, US (CIA)", 38.9517, -77.1467),
 ]
@@ -222,20 +189,20 @@ class Case(db.Model):
     threat_level = db.Column(db.String(20), default="MEDIUM")
     priority = db.Column(db.Integer, default=3)
     due_date = db.Column(db.DateTime, nullable=True)
-    subject = db.Column(db.String(200), default="")   # who/what the case is about
-    legal_note = db.Column(db.Text, default="")        # chain of custody / purpose
+    subject = db.Column(db.String(200), default="")
+    legal_note = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     timeline = db.relationship("TimelineEntry", backref="case", lazy=True,
-                               cascade="all, delete-orphan", order_by="TimelineEntry.event_at.desc()")
+                               cascade="all, delete-orphan")
     intel = db.relationship("IntelItem", backref="case", lazy=True,
-                            cascade="all, delete-orphan", order_by="IntelItem.created_at.desc()")
+                            cascade="all, delete-orphan")
     media = db.relationship("MediaItem", backref="case", lazy=True,
-                            cascade="all, delete-orphan", order_by="MediaItem.created_at.desc()")
+                            cascade="all, delete-orphan")
     links = db.relationship("CaseEntity", backref="case", lazy=True,
                             cascade="all, delete-orphan")
     analyst = db.relationship("AnalystNote", backref="case", lazy=True,
-                              cascade="all, delete-orphan", order_by="AnalystNote.created_at.desc()")
+                              cascade="all, delete-orphan")
 
 
 class Entity(db.Model):
@@ -258,12 +225,11 @@ class Entity(db.Model):
 
 
 class CaseEntity(db.Model):
-    """Which entities are attached to which case."""
     __tablename__ = "mis_case_entities"
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
-    role = db.Column(db.String(80), default="POI")  # POI, SUSPECT, WITNESS, SOURCE, VICTIM, etc.
+    role = db.Column(db.String(80), default="POI")
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     entity = db.relationship("Entity")
 
@@ -283,16 +249,15 @@ class Relationship(db.Model):
 class Source(db.Model):
     __tablename__ = "mis_sources"
     id = db.Column(db.Integer, primary_key=True)
-    handle = db.Column(db.String(120), nullable=False)      # e.g. "S1", "Source Alpha"
+    handle = db.Column(db.String(120), nullable=False)
     description = db.Column(db.Text, default="")
-    reliability = db.Column(db.String(2), default="F")      # A–F
+    reliability = db.Column(db.String(2), default="F")
     contact_notes = db.Column(db.Text, default="")
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class TimelineEntry(db.Model):
-    """Central object. Everything hangs off this."""
     __tablename__ = "mis_timeline"
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
@@ -320,13 +285,9 @@ class IntelItem(db.Model):
     category = db.Column(db.String(40), default="OBSERVATION")
     classification = db.Column(db.String(40), default="SECRET")
 
-    # Source reliability A–F
     source_reliability = db.Column(db.String(2), default="F")
-    # Info confidence 1–6
     info_confidence = db.Column(db.String(2), default="6")
-    # STATUS: UNVERIFIED / CORROBORATED / VERIFIED / DISPUTED / FALSE
     status = db.Column(db.String(20), default="UNVERIFIED")
-    # Is this a fact, a claim, an observation, an assessment?
     is_fact = db.Column(db.Boolean, default=False)
     is_claim = db.Column(db.Boolean, default=False)
 
@@ -344,19 +305,17 @@ class MediaItem(db.Model):
     timeline_id = db.Column(db.Integer, db.ForeignKey("mis_timeline.id"), nullable=True)
 
     title = db.Column(db.String(200), nullable=False)
-    kind = db.Column(db.String(20), default="IMAGE")  # IMAGE / AUDIO / VIDEO / DOCUMENT
+    kind = db.Column(db.String(20), default="IMAGE")
     filename = db.Column(db.String(255))
     mimetype = db.Column(db.String(120), default="application/octet-stream")
     description = db.Column(db.Text, default="")
     source_notes = db.Column(db.Text, default="")
     classification = db.Column(db.String(40), default="SECRET")
 
-    # ORIGINAL vs ANALYSIS COPY
     is_original = db.Column(db.Boolean, default=True)
     parent_id = db.Column(db.Integer, db.ForeignKey("mis_media.id"), nullable=True)
-    derived_note = db.Column(db.Text, default="")  # e.g. "cropped", "enhanced", "blurred"
+    derived_note = db.Column(db.Text, default="")
 
-    # Encrypted payload (bytes) + metadata
     data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64), index=True)
     encrypted = db.Column(db.Boolean, default=False)
@@ -374,7 +333,6 @@ class AnalystNote(db.Model):
     category = db.Column(db.String(40), default="FACT")
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, default="")
-    # Links to intel items this note refers to (comma-separated IDs, kept simple)
     linked_intel_ids = db.Column(db.String(500), default="")
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -422,6 +380,107 @@ def audit(action, detail="", actor="system"):
 @login_manager.user_loader
 def load_user(uid):
     return db.session.get(User, int(uid))
+
+
+# ============================================================
+# AUTO-MIGRATION — add missing columns to existing tables
+# ============================================================
+MIGRATIONS = {
+    "mis_users": [
+        ("codename", "VARCHAR(80) DEFAULT ''"),
+        ("clearance", "VARCHAR(40) DEFAULT 'SECRET'"),
+    ],
+    "mis_cases": [
+        ("subject", "VARCHAR(200) DEFAULT ''"),
+        ("legal_note", "TEXT DEFAULT ''"),
+        ("threat_level", "VARCHAR(20) DEFAULT 'MEDIUM'"),
+        ("classification", "VARCHAR(40) DEFAULT 'SECRET'"),
+        ("priority", "INTEGER DEFAULT 3"),
+        ("due_date", "TIMESTAMP"),
+    ],
+    "mis_entities": [
+        ("threat_level", "VARCHAR(20) DEFAULT 'LOW'"),
+        ("region", "VARCHAR(120) DEFAULT ''"),
+        ("latitude", "DOUBLE PRECISION DEFAULT 0"),
+        ("longitude", "DOUBLE PRECISION DEFAULT 0"),
+    ],
+    "mis_notes": [],
+    "mis_evidence": [],
+    "mis_intel": [
+        ("timeline_id", "INTEGER"),
+        ("source_id", "INTEGER"),
+        ("category", "VARCHAR(40) DEFAULT 'OBSERVATION'"),
+        ("classification", "VARCHAR(40) DEFAULT 'SECRET'"),
+        ("source_reliability", "VARCHAR(2) DEFAULT 'F'"),
+        ("info_confidence", "VARCHAR(2) DEFAULT '6'"),
+        ("status", "VARCHAR(20) DEFAULT 'UNVERIFIED'"),
+        ("is_fact", "BOOLEAN DEFAULT FALSE"),
+        ("is_claim", "BOOLEAN DEFAULT FALSE"),
+        ("analyst_comment", "TEXT DEFAULT ''"),
+        ("created_by", "VARCHAR(80) DEFAULT 'system'"),
+    ],
+    "mis_media": [
+        ("timeline_id", "INTEGER"),
+        ("kind", "VARCHAR(20) DEFAULT 'IMAGE'"),
+        ("description", "TEXT DEFAULT ''"),
+        ("source_notes", "TEXT DEFAULT ''"),
+        ("classification", "VARCHAR(40) DEFAULT 'SECRET'"),
+        ("is_original", "BOOLEAN DEFAULT TRUE"),
+        ("parent_id", "INTEGER"),
+        ("derived_note", "TEXT DEFAULT ''"),
+        ("encrypted", "BOOLEAN DEFAULT FALSE"),
+        ("created_by", "VARCHAR(80) DEFAULT 'system'"),
+    ],
+    "mis_timeline": [
+        ("category", "VARCHAR(40) DEFAULT 'OBSERVATION'"),
+        ("classification", "VARCHAR(40) DEFAULT 'SECRET'"),
+        ("created_by", "VARCHAR(80) DEFAULT 'system'"),
+    ],
+    "mis_sources": [
+        ("reliability", "VARCHAR(2) DEFAULT 'F'"),
+        ("description", "TEXT DEFAULT ''"),
+        ("contact_notes", "TEXT DEFAULT ''"),
+        ("case_id", "INTEGER"),
+    ],
+    "mis_analyst": [
+        ("linked_intel_ids", "VARCHAR(500) DEFAULT ''"),
+        ("created_by", "VARCHAR(80) DEFAULT 'system'"),
+    ],
+    "mis_dead_drops": [
+        ("classification", "VARCHAR(40) DEFAULT 'TOP_SECRET'"),
+        ("created_by", "VARCHAR(80) DEFAULT 'system'"),
+    ],
+    "mis_relationships": [
+        ("description", "TEXT DEFAULT ''"),
+        ("status", "VARCHAR(20) DEFAULT 'UNVERIFIED'"),
+        ("case_id", "INTEGER"),
+    ],
+    "mis_case_entities": [
+        ("role", "VARCHAR(80) DEFAULT 'POI'"),
+    ],
+}
+
+
+def auto_migrate():
+    """Add any missing columns to existing tables. Idempotent."""
+    is_postgres = db.engine.dialect.name == "postgresql"
+    insp = inspect(db.engine)
+    existing_tables = set(insp.get_table_names())
+
+    for table, cols in MIGRATIONS.items():
+        if table not in existing_tables:
+            continue  # new table will be created by db.create_all()
+        existing_cols = {c["name"] for c in insp.get_columns(table)}
+        for col_name, col_type in cols:
+            if col_name in existing_cols:
+                continue
+            sql = f'ALTER TABLE {table} ADD COLUMN {col_name} {col_type}'
+            try:
+                with db.engine.begin() as conn:
+                    conn.execute(text(sql))
+                print(f"🛠  Migrated: {table}.{col_name} {col_type}")
+            except Exception as e:
+                print(f"⚠️  Migration failed {table}.{col_name}: {e}")
 
 
 # ============================================================
@@ -485,11 +544,11 @@ class IntelForm(FlaskForm):
     source_reliability = SelectField("Source Reliability", choices=SOURCE_RELIABILITY)
     info_confidence = SelectField("Information Confidence", choices=INFO_CONFIDENCE)
     status = SelectField("Status", choices=INTEL_STATUS)
-    is_fact = BooleanField("Mark as established FACT (only if independently verified)")
-    is_claim = BooleanField("Mark as CLAIM (statement made by a source)")
+    is_fact = BooleanField("Mark as FACT")
+    is_claim = BooleanField("Mark as CLAIM")
     analyst_comment = TextAreaField("Analyst Comment")
     timeline_id = SelectField("Attach to Timeline Entry", coerce=int, validators=[Optional()])
-    submit = SubmitField("File Intel Item")
+    submit = SubmitField("File Intel")
 
 
 class EntityForm(FlaskForm):
@@ -529,7 +588,7 @@ class SourceForm(FlaskForm):
     handle = StringField("Source Handle", validators=[DataRequired(), Length(1, 120)])
     description = TextAreaField("Description")
     reliability = SelectField("Reliability", choices=SOURCE_RELIABILITY)
-    contact_notes = TextAreaField("Contact Notes (do NOT store PII you are not authorised to keep)")
+    contact_notes = TextAreaField("Contact Notes")
     submit = SubmitField("Save Source")
 
 
@@ -540,13 +599,13 @@ class MediaForm(FlaskForm):
         ("VIDEO", "VIDEO"), ("DOCUMENT", "DOCUMENT")
     ])
     file = FileField("File", validators=[FileRequired()])
-    description = TextAreaField("Description of what is observed")
+    description = TextAreaField("Description")
     source_notes = TextAreaField("Source / Provenance")
     classification = SelectField("Classification", choices=CLASSIFICATIONS)
-    encrypt = BooleanField("Encrypt at rest (requires passphrase to view)")
-    passphrase = PasswordField("Encryption Passphrase (if encrypting)")
+    encrypt = BooleanField("Encrypt at rest")
+    passphrase = PasswordField("Encryption Passphrase")
     parent_id = SelectField("Derived from (original)", coerce=int, validators=[Optional()])
-    derived_note = StringField("Derivation note (e.g. cropped, enhanced, blurred)")
+    derived_note = StringField("Derivation note")
     timeline_id = SelectField("Attach to Timeline Entry", coerce=int, validators=[Optional()])
     submit = SubmitField("Secure Media")
 
@@ -650,7 +709,7 @@ def mpc_decrypt(blob: bytes, password: str) -> bytes:
 
 
 # ============================================================
-# PDF REPORT — Case File
+# PDFs
 # ============================================================
 def build_case_pdf(case: Case) -> bytes:
     buf = io.BytesIO()
@@ -670,48 +729,41 @@ def build_case_pdf(case: Case) -> bytes:
     story.append(Spacer(1, 0.4 * cm))
     story.append(Paragraph(f"OP-{case.id:04d} — {case.title}", h2))
     story.append(Paragraph(f"Subject: {case.subject or '—'}", body))
-    story.append(Paragraph(f"Status: {case.status} · Classification: {case.classification} · Threat: {case.threat_level} · Priority: {case.priority}", body))
+    story.append(Paragraph(f"Status: {case.status} · Class: {case.classification} · Threat: {case.threat_level} · Priority: {case.priority}", body))
     if case.due_date:
         story.append(Paragraph(f"Due: {case.due_date.isoformat()}", body))
     story.append(Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", body))
     story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("Purpose / Legal Basis", h2))
-    story.append(Paragraph(case.legal_note or "Documentation of observations and information. "
-        "This file is intended to be handed to appropriate authorities if required.", body))
+    story.append(Paragraph(case.legal_note or "Documentation of observations and information for lawful hand-over.", body))
     story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("Objective", h2))
     story.append(Paragraph(case.objective or "—", body))
     story.append(Spacer(1, 0.3 * cm))
 
-    # TIMELINE
     story.append(Paragraph("Timeline", h2))
     if case.timeline:
         for t in sorted(case.timeline, key=lambda x: x.event_at):
             story.append(Paragraph(
-                f"<b>{t.event_at.strftime('%Y-%m-%d %H:%M')}</b> · {t.category} · {t.classification}<br>"
-                f"<b>{t.title}</b>", h3
-            ))
+                f"<b>{t.event_at.strftime('%Y-%m-%d %H:%M')}</b> · {t.category} · {t.classification}<br><b>{t.title}</b>", h3))
             if t.description:
                 story.append(Paragraph(t.description.replace("\n", "<br/>"), body))
             for i in t.intel:
                 story.append(Paragraph(
-                    f"  ↳ INTEL: {i.title} · Src reliability {i.source_reliability} · "
-                    f"Conf {i.info_confidence} · {i.status}", body))
+                    f"  ↳ INTEL: {i.title} · Src {i.source_reliability}{i.info_confidence} · {i.status}", body))
             for m in t.media:
                 story.append(Paragraph(
-                    f"  ↳ MEDIA: {m.title} ({m.kind}) sha256 {m.sha256[:16]}… "
-                    f"{'(encrypted)' if m.encrypted else ''}", body))
+                    f"  ↳ MEDIA: {m.title} ({m.kind}) sha256 {m.sha256[:16]}… {'(enc)' if m.encrypted else ''}", body))
             story.append(Spacer(1, 0.2 * cm))
     else:
         story.append(Paragraph("— none —", body))
     story.append(Spacer(1, 0.3 * cm))
 
-    # ANALYST VIEW
     story.append(PageBreak())
     story.append(Paragraph("Analyst View", h2))
-    for cat in ["FACT", "CLAIM", "CORROBORATED", "UNVERIFIED", "ASSESSMENT", "QUESTION", "CONTRADICTION"]:
+    for cat, _label in ANALYST_CATEGORIES:
         items = [a for a in case.analyst if a.category == cat]
         if not items:
             continue
@@ -744,15 +796,14 @@ def build_case_pdf(case: Case) -> bytes:
     for link in case.links:
         e = link.entity
         story.append(Paragraph(
-            f"<b>{e.name}</b> ({e.type}) · Role: {link.role} · "
-            f"Threat: {e.threat_level} · Region: {e.region or '—'}", body))
+            f"<b>{e.name}</b> ({e.type}) · Role: {link.role} · Threat: {e.threat_level} · Region: {e.region or '—'}", body))
 
     story.append(Spacer(1, 0.3 * cm))
     story.append(Paragraph("Chain of Custody / Handling Note", h2))
     story.append(Paragraph(
-        "This report is compiled from information collected by the operator. "
+        "Compiled from information collected by the operator. "
         "Sources, reliability, and confidence are marked per item. "
-        "Media are preserved with SHA-256 hashes at intake; derived copies are marked as such. "
+        "Media preserved with SHA-256 hashes at intake; derived copies are marked as such. "
         "No confrontation, surveillance, or engagement with subjects is authorised by this document. "
         "If information suggests imminent risk to life, contact police/emergency channels.", body))
 
@@ -773,20 +824,18 @@ def build_briefing_pdf(days: int = 1) -> bytes:
 
     story = []
     story.append(Paragraph("MIS DAILY BRIEFING", h1))
-    story.append(Paragraph(f"Window: last {days} day(s) · Generated: {datetime.utcnow().isoformat()}Z", body))
+    story.append(Paragraph(f"Window: last {days} day(s) · {datetime.utcnow().isoformat()}Z", body))
     story.append(Spacer(1, 0.4 * cm))
 
     cases = db.session.execute(db.select(Case).where(Case.created_at >= since)).scalars().all()
-    story.append(Paragraph(f"Operations Opened ({len(cases)})", h2))
+    story.append(Paragraph(f"Cases Opened ({len(cases)})", h2))
     for c in cases:
-        story.append(Paragraph(
-            f"OP-{c.id:04d} — {c.title} · Threat {c.threat_level}", body))
+        story.append(Paragraph(f"OP-{c.id:04d} — {c.title} · Threat {c.threat_level}", body))
 
     intel = db.session.execute(db.select(IntelItem).where(IntelItem.created_at >= since)).scalars().all()
     story.append(Paragraph(f"Intel Items ({len(intel)})", h2))
     for i in intel:
-        story.append(Paragraph(
-            f"• {i.title} · {i.status} · src {i.source_reliability}{i.info_confidence}", body))
+        story.append(Paragraph(f"• {i.title} · {i.status} · src {i.source_reliability}{i.info_confidence}", body))
 
     media = db.session.execute(db.select(MediaItem).where(MediaItem.created_at >= since)).scalars().all()
     story.append(Paragraph(f"Media Secured ({len(media)})", h2))
@@ -862,16 +911,13 @@ def dashboard():
         db.select(Case).where(Case.status.in_(["Active", "Review"]))
         .order_by(Case.priority, Case.due_date.asc().nullslast()).limit(5)
     ).scalars().all()
-
     recent = db.session.execute(
         db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(10)
     ).scalars().all()
-
     drops = db.session.execute(
         db.select(DeadDrop).where(DeadDrop.unlock_at > now)
         .order_by(DeadDrop.unlock_at).limit(5)
     ).scalars().all()
-
     return render_template("dashboard.html", stats=stats, recent=recent,
                            threat_ops=threat_ops, drops=drops)
 
@@ -943,23 +989,16 @@ def case_detail(cid):
     rel_form.from_id.choices = entity_choices()
     rel_form.to_id.choices = entity_choices()
 
-    # Analyst view buckets
     analyst_buckets = {}
     for cat, _label in ANALYST_CATEGORIES:
         analyst_buckets[cat] = [a for a in c.analyst if a.category == cat]
 
     return render_template(
-        "case_detail.html",
-        case=c,
-        form=form,
-        report_form=report_form,
-        timeline_form=timeline_form,
-        intel_form=intel_form,
-        media_form=media_form,
-        analyst_form=analyst_form,
-        rel_form=rel_form,
-        case_entity_form=case_entity_form,
-        source_form=source_form,
+        "case_detail.html", case=c, form=form,
+        report_form=report_form, timeline_form=timeline_form,
+        intel_form=intel_form, media_form=media_form,
+        analyst_form=analyst_form, rel_form=rel_form,
+        case_entity_form=case_entity_form, source_form=source_form,
         analyst_buckets=analyst_buckets,
     )
 
@@ -1001,11 +1040,9 @@ def timeline_add(cid):
     form = TimelineForm()
     if form.validate_on_submit():
         t = TimelineEntry(
-            case_id=c.id,
-            title=form.title.data,
+            case_id=c.id, title=form.title.data,
             description=form.description.data or "",
-            event_at=form.event_at.data,
-            category=form.category.data,
+            event_at=form.event_at.data, category=form.category.data,
             classification=form.classification.data,
             created_by=current_user.username,
         )
@@ -1025,7 +1062,6 @@ def timeline_delete(tid):
     cid = t.case_id
     db.session.delete(t)
     db.session.commit()
-    audit("timeline_delete", f"#{tid}", actor=current_user.username)
     return redirect(url_for("case_detail", cid=cid))
 
 
@@ -1044,15 +1080,13 @@ def intel_add(cid):
             case_id=c.id,
             timeline_id=form.timeline_id.data or None,
             source_id=form.source_id.data or None,
-            title=form.title.data,
-            body=form.body.data,
+            title=form.title.data, body=form.body.data,
             category=form.category.data,
             classification=form.classification.data,
             source_reliability=form.source_reliability.data,
             info_confidence=form.info_confidence.data,
             status=form.status.data,
-            is_fact=form.is_fact.data,
-            is_claim=form.is_claim.data,
+            is_fact=form.is_fact.data, is_claim=form.is_claim.data,
             analyst_comment=form.analyst_comment.data or "",
             created_by=current_user.username,
         )
@@ -1072,7 +1106,6 @@ def intel_delete(iid):
     cid = i.case_id
     db.session.delete(i)
     db.session.commit()
-    audit("intel_delete", f"#{iid}", actor=current_user.username)
     return redirect(url_for("case_detail", cid=cid))
 
 
@@ -1111,10 +1144,8 @@ def media_add(cid):
             raw = mpc_encrypt(raw, form.passphrase.data)
 
         m = MediaItem(
-            case_id=c.id,
-            timeline_id=form.timeline_id.data or None,
-            title=form.title.data,
-            kind=form.kind.data,
+            case_id=c.id, timeline_id=form.timeline_id.data or None,
+            title=form.title.data, kind=form.kind.data,
             filename=secure_filename(f.filename or "media.bin"),
             mimetype=f.mimetype or "application/octet-stream",
             description=form.description.data or "",
@@ -1123,9 +1154,7 @@ def media_add(cid):
             is_original=(form.parent_id.data or 0) == 0,
             parent_id=form.parent_id.data or None,
             derived_note=form.derived_note.data or "",
-            data=raw,
-            sha256=digest,
-            encrypted=encrypted,
+            data=raw, sha256=digest, encrypted=encrypted,
             created_by=current_user.username,
         )
         db.session.add(m)
@@ -1144,7 +1173,6 @@ def media_view(mid):
     if not m.encrypted:
         return send_file(io.BytesIO(m.data), mimetype=m.mimetype,
                          as_attachment=False, download_name=m.filename)
-    # Encrypted: requires passphrase via query param (GET) — kept simple
     pw = request.args.get("pw", "")
     if not pw:
         return render_template("media_unlock.html", media=m)
@@ -1182,7 +1210,6 @@ def media_delete(mid):
     cid = m.case_id
     db.session.delete(m)
     db.session.commit()
-    audit("media_delete", f"#{mid}", actor=current_user.username)
     return redirect(url_for("case_detail", cid=cid))
 
 
@@ -1229,7 +1256,6 @@ def entity_delete(eid):
     e = db.session.get(Entity, eid) or abort(404)
     db.session.delete(e)
     db.session.commit()
-    audit("entity_delete", e.name, actor=current_user.username)
     return redirect(url_for("entities"))
 
 
@@ -1294,7 +1320,6 @@ def relationship_delete(rid):
     r = db.session.get(Relationship, rid) or abort(404)
     db.session.delete(r)
     db.session.commit()
-    audit("relationship_delete", f"#{rid}", actor=current_user.username)
     return redirect(url_for("relationships"))
 
 
@@ -1327,7 +1352,6 @@ def source_delete(sid):
     s = db.session.get(Source, sid) or abort(404)
     db.session.delete(s)
     db.session.commit()
-    audit("source_delete", s.handle, actor=current_user.username)
     return redirect(url_for("sources"))
 
 
@@ -1341,10 +1365,8 @@ def analyst_add(cid):
     form = AnalystForm()
     if form.validate_on_submit():
         a = AnalystNote(
-            case_id=c.id,
-            category=form.category.data,
-            title=form.title.data,
-            body=form.body.data,
+            case_id=c.id, category=form.category.data,
+            title=form.title.data, body=form.body.data,
             linked_intel_ids=form.linked_intel_ids.data or "",
             created_by=current_user.username,
         )
@@ -1535,12 +1557,16 @@ def agent_delete(uid):
 
 
 # ============================================================
-# BOOTSTRAP
+# BOOTSTRAP — order matters: create_all → migrate → seed
 # ============================================================
 def bootstrap():
     with app.app_context():
         db.create_all()
 
+        # 1) Add any missing columns to existing tables
+        auto_migrate()
+
+        # 2) Seed / repair the initial user
         u = app.config["INITIAL_USERNAME"]
         p = app.config["INITIAL_PASSWORD"]
         force = os.getenv("FORCE_SEED", "0") == "1"
