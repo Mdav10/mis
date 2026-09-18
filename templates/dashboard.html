@@ -14,7 +14,7 @@
   <h2>◆ Log New Intelligence</h2>
   <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data" id="quickForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <textarea name="body" id="bodyField" rows="4" placeholder="Type what you learned..."></textarea>
+    <textarea name="body" id="bodyField" rows="4" placeholder="Add new Top News here..."></textarea>
 
     <label>About</label>
     <select name="case_id" required>
