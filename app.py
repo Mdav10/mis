@@ -1131,6 +1131,106 @@ def user_delete(uid):
     return redirect(url_for("users"))
 
 
+
+# ============================================================
+# ROUTES — BRIEFING (last N days of updates)
+# ============================================================
+@app.route("/briefing")
+@login_required
+def briefing():
+    days = int(request.args.get("days", 1))
+    since = datetime.utcnow() - timedelta(days=days)
+    updates = db.session.execute(
+        db.select(Update).where(Update.happened_at >= since)
+        .order_by(Update.happened_at.desc())
+    ).scalars().all()
+    return render_template("briefing.html", days=days, since=since, updates=updates)
+
+
+@app.route("/briefing.pdf", methods=["POST"])
+@login_required
+def briefing_pdf():
+    form = ReportForm()
+    if not form.validate_on_submit():
+        flash("Password required (min 6 chars).", "error")
+        return redirect(url_for("briefing"))
+
+    days = int(request.form.get("days", 1))
+    since = datetime.utcnow() - timedelta(days=days)
+
+    updates = db.session.execute(
+        db.select(Update).where(Update.happened_at >= since)
+        .order_by(Update.happened_at.asc())
+    ).scalars().all()
+
+    # Build PDF
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=2.0 * cm, rightMargin=2.0 * cm,
+                            topMargin=2.0 * cm, bottomMargin=2.0 * cm,
+                            title=f"MIS Briefing — {days}d")
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"],
+                        textColor=colors.HexColor("#111111"),
+                        fontName="Helvetica-Bold", fontSize=18)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"],
+                        textColor=colors.HexColor("#333333"),
+                        fontName="Helvetica-Bold", fontSize=12)
+    h3 = ParagraphStyle("h3", parent=styles["Heading3"],
+                        textColor=colors.HexColor("#111111"),
+                        fontName="Helvetica-Bold", fontSize=11)
+    body = ParagraphStyle("body", parent=styles["BodyText"],
+                          fontName="Helvetica", fontSize=10, leading=14)
+
+    def esc(s):
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    story = [Paragraph("MIS BRIEFING", h1),
+             Paragraph(f"Last {days} day(s)", h2),
+             Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", body),
+             Spacer(1, 0.4 * cm)]
+
+    if not updates:
+        story.append(Paragraph("— no entries in this window —", body))
+    for u in updates:
+        c = db.session.get(Case, u.case_id)
+        story.append(Paragraph(
+            f"<b>{u.happened_at.strftime('%d %b %Y · %H:%M')}</b> — {esc(c.title) if c else '—'}",
+            h3))
+        if u.body:
+            for para in (u.body or "").split("\n"):
+                if para.strip():
+                    story.append(Paragraph(esc(para), body))
+        markers = []
+        for m in u.photos:
+            if m.kind == "photo":
+                markers.append("[Photo attached]")
+            elif m.kind == "voice":
+                markers.append("[Voice attached]")
+        if markers:
+            story.append(Paragraph(" · ".join(markers), body))
+        story.append(Spacer(1, 0.2 * cm))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    encrypted_pdf = encrypt_pdf(pdf_bytes, form.password.data)
+
+    audit("briefing_download", f"{days}d — AES-256 PDF", actor=current_user.username)
+
+    fname = f"MIS_Briefing_{days}d_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
+    resp = send_file(
+        io.BytesIO(encrypted_pdf),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=fname,
+    )
+    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+
+
 # ============================================================
 # PWA — manifest + service worker
 # ============================================================
