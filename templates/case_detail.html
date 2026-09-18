@@ -12,7 +12,7 @@
     <input type="hidden" name="case_id" value="{{ case.id }}">
     <textarea name="body" rows="3" placeholder="Type what you learned..."></textarea>
     <label>When</label>
-    <input type="datetime-local" name="happened_at" class="whenField">
+    <input type="datetime-local" name="happened_at" class="whenField" value="{{ now_local_str }}">
     <div class="attach-row">
       <label class="attach">📷 <span>Photo</span>
         <input type="file" name="photos" accept="image/*" multiple>
@@ -175,10 +175,14 @@
 
 <script>
 (function(){
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  document.querySelectorAll('.whenField').forEach(el => {
-    el.value = now.toISOString().slice(0,16);
+  // Ensure "When" fields always reflect LOCAL time, not server time.
+  // Runs on any field that is empty.
+  var pad = function(n){ return n<10 ? '0'+n : ''+n; };
+  var d = new Date();
+  var localStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+               + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  document.querySelectorAll('.whenField').forEach(function(el){
+    if (!el.value) el.value = localStr;
   });
 })();
 </script>

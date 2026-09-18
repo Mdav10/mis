@@ -25,7 +25,7 @@
     </select>
 
     <label>When</label>
-    <input type="datetime-local" name="happened_at" id="whenField">
+    <input type="datetime-local" name="happened_at" id="whenField" value="{{ now_local_str }}">
 
     <div class="attach-row">
       <label class="attach">
@@ -105,35 +105,40 @@
 
 <script>
 (function(){
-  const el = document.getElementById('whenField');
-  if (el) {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    el.value = now.toISOString().slice(0,16);
+  // Prefill the "When" field with LOCAL time (device time), not server time.
+  // Runs only if the field is empty.
+  var el = document.getElementById('whenField');
+  if (el && !el.value) {
+    var d = new Date();
+    var pad = function(n){ return n<10 ? '0'+n : ''+n; };
+    el.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+             + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
-  const photosInput = document.querySelector('input[name="photos"]');
-  const voiceInput = document.querySelector('input[name="voice"]');
-  const prev = document.getElementById('preview');
+
+  // Media preview
+  var photosInput = document.querySelector('input[name="photos"]');
+  var voiceInput  = document.querySelector('input[name="voice"]');
+  var prev = document.getElementById('preview');
   function render() {
     if (!prev) return;
     prev.innerHTML = '';
     if (photosInput && photosInput.files) {
-      [...photosInput.files].forEach(f => {
-        const url = URL.createObjectURL(f);
-        const img = document.createElement('img');
+      Array.prototype.forEach.call(photosInput.files, function(f){
+        var url = URL.createObjectURL(f);
+        var img = document.createElement('img');
         img.src = url; img.className = 'thumb';
         prev.appendChild(img);
       });
     }
     if (voiceInput && voiceInput.files && voiceInput.files[0]) {
-      const url = URL.createObjectURL(voiceInput.files[0]);
-      const a = document.createElement('audio');
+      var url = URL.createObjectURL(voiceInput.files[0]);
+      var a = document.createElement('audio');
       a.controls = true; a.src = url; a.preload = 'none';
       prev.appendChild(a);
     }
   }
   if (photosInput) photosInput.addEventListener('change', render);
-  if (voiceInput) voiceInput.addEventListener('change', render);
+  if (voiceInput)  voiceInput.addEventListener('change', render);
 })();
 </script>
 {% endblock %}

@@ -7,7 +7,9 @@
   <form method="POST" enctype="multipart/form-data">
     {{ form.hidden_tag() }}
     <label>What did you learn?</label>{{ form.body(rows=4) }}
-    <label>When</label>{{ form.happened_at() }}
+    <label>When</label>
+    <input type="datetime-local" name="happened_at"
+           value="{{ update.happened_at.strftime('%Y-%m-%dT%H:%M') if update.happened_at else now_local_str }}">
     <label>Attach more photos</label>{{ form.photos(multiple=True, accept="image/*") }}
     <label>Attach voice</label>{{ form.voice(accept="audio/*") }}
     <button class="primary big">Save Changes</button>

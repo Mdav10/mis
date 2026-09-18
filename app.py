@@ -1,5 +1,5 @@
 # ============================================================
-# MIS v10 — Full app with cache-busting service worker headers
+# MIS v11 — Full app with correct date/time handling
 # ============================================================
 
 import os
@@ -70,13 +70,38 @@ def _inject_csrf():
 
 @app.context_processor
 def _inject_now():
-    return {"now": datetime.utcnow()}
+    # Expose a "local now" string for prefilling form fields
+    return {"now_local_str": datetime.now().strftime("%Y-%m-%dT%H:%M")}
 
 db = SQLAlchemy(app)
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Please log in."
+
+
+# ============================================================
+# TIME HELPERS — kill all timezone drift
+# ============================================================
+def parse_local_dt(s):
+    """Parse a string from <input type=datetime-local> as-is,
+    with NO timezone shift. The user's typed time is stored verbatim."""
+    if not s:
+        return None
+    s = s.strip()
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def format_dt(dt):
+    """Format for display exactly as stored, no shifting."""
+    if not dt:
+        return ""
+    return dt.strftime("%d %b %Y · %H:%M")
 
 
 # ============================================================
@@ -134,7 +159,7 @@ class Update(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     body = db.Column(db.Text, default="")
-    happened_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    happened_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -212,13 +237,13 @@ class DeadDrop(db.Model):
 
     @property
     def is_unlocked(self):
-        return datetime.utcnow() >= self.unlock_at
+        return datetime.now() >= self.unlock_at
 
     @property
     def countdown(self):
         if self.is_unlocked:
             return "OPEN"
-        d = self.unlock_at - datetime.utcnow()
+        d = self.unlock_at - datetime.now()
         return f"{d.days}d {d.seconds//3600:02d}:{(d.seconds%3600)//60:02d}:{d.seconds%60:02d}"
 
 
@@ -425,7 +450,7 @@ class CaseForm(FlaskForm):
 class QuickAddForm(FlaskForm):
     body = TextAreaField("What did you learn?", validators=[Optional()])
     case_id = SelectField("About", coerce=int, validators=[DataRequired()])
-    happened_at = DateTimeField("When", format="%Y-%m-%d %H:%M", validators=[Optional()])
+    happened_at = StringField("When", validators=[Optional()])
     photos = FileField("Photos")
     voice = FileField("Voice")
     submit = SubmitField("Save")
@@ -528,7 +553,7 @@ def build_case_pdf(case: Case) -> bytes:
     story.append(Paragraph(
         f"Status: {esc(case.status)} · Threat: {esc(case.threat_level)} · Priority: {case.priority}",
         body))
-    story.append(Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", meta))
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", meta))
     story.append(Spacer(1, 0.4 * cm))
 
     if case.notes:
@@ -690,7 +715,8 @@ def dashboard():
         "users": db.session.scalar(db.select(db.func.count(User.id))) or 0,
     }
     return render_template("dashboard.html", cases=cases, recent=recent,
-                           case_choices=case_choices(), stats=stats)
+                           case_choices=case_choices(), stats=stats,
+                           now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"))
 
 
 # ============================================================
@@ -706,7 +732,9 @@ def quick_add():
         return redirect(request.referrer or url_for("dashboard"))
 
     body = (form.body.data or "").strip()
-    when = form.happened_at.data or datetime.utcnow()
+
+    # Parse the datetime the user typed. If empty, use NOW.
+    when = parse_local_dt(form.happened_at.data) or datetime.now()
 
     files = []
     if "photos" in request.files:
@@ -794,6 +822,7 @@ def case_detail(cid):
         "case_detail.html",
         case=c, form=form,
         case_choices=case_choices(),
+        now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"),
     )
 
 
@@ -844,7 +873,7 @@ def case_report(cid):
           actor=current_user.username)
 
     safe_title = "".join(ch for ch in c.title if ch.isalnum() or ch in "-_")[:40] or "case"
-    fname = f"MIS_{safe_title}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
+    fname = f"MIS_{safe_title}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
 
     resp = send_file(
         io.BytesIO(encrypted_pdf),
@@ -867,9 +896,15 @@ def update_edit(uid):
     form = QuickAddForm(obj=u)
     form.case_id.choices = case_choices()
     form.case_id.data = u.case_id
+    # Preselect existing datetime as-is (no shift)
+    if u.happened_at:
+        form.happened_at.data = u.happened_at.strftime("%Y-%m-%dT%H:%M")
+
     if form.validate_on_submit():
         u.body = (form.body.data or "").strip() or u.body
-        u.happened_at = form.happened_at.data or u.happened_at
+        new_when = parse_local_dt(form.happened_at.data)
+        if new_when:
+            u.happened_at = new_when
         for kind, key in [("photo", "photos"), ("voice", "voice")]:
             if key in request.files:
                 files = request.files.getlist(key) if key == "photos" else [request.files.get(key)]
@@ -1136,7 +1171,7 @@ def drop_delete(did):
 @login_required
 def briefing():
     days = int(request.args.get("days", 1))
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now() - timedelta(days=days)
     updates = db.session.execute(
         db.select(Update).where(Update.happened_at >= since)
         .order_by(Update.happened_at.desc())
@@ -1153,7 +1188,7 @@ def briefing_pdf():
         return redirect(url_for("briefing"))
 
     days = int(request.form.get("days", 1))
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now() - timedelta(days=days)
     updates = db.session.execute(
         db.select(Update).where(Update.happened_at >= since)
         .order_by(Update.happened_at.asc())
@@ -1179,7 +1214,7 @@ def briefing_pdf():
 
     story = [Paragraph("MIS BRIEFING", h1),
              Paragraph(f"Last {days} day(s)", h2),
-             Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", body),
+             Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", body),
              Spacer(1, 0.4 * cm)]
 
     if not updates:
@@ -1228,7 +1263,7 @@ def briefing_pdf():
 
     audit("briefing_download", f"{days}d — AES-256 PDF", actor=current_user.username)
 
-    fname = f"MIS_Briefing_{days}d_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
+    fname = f"MIS_Briefing_{days}d_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
     resp = send_file(
         io.BytesIO(encrypted_pdf),
         mimetype="application/pdf",
