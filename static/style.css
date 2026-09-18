@@ -1,4 +1,7 @@
-/* MIS v4 — MI6/CIA aesthetic, mobile-first */
+/* ============================================================
+   MIS v9 — Full Stylesheet
+   MI6/CIA aesthetic · Mobile-first · Button spinner included
+   ============================================================ */
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { -webkit-text-size-adjust: 100%; }
@@ -257,6 +260,7 @@ button, .primary {
   min-height: 42px;
   letter-spacing: 1.8px; text-transform: uppercase;
   transition: all 0.15s;
+  position: relative;
 }
 button:hover, .primary:hover {
   background: var(--amber); color: var(--bg);
@@ -308,6 +312,29 @@ button:active { transform: scale(0.98); }
 .upd-actions form { display: inline; }
 .media-block { position: relative; }
 .media-block img { max-width: 140px; border-radius: 4px; border: 1px solid var(--border); }
+
+/* ---------- People on case ---------- */
+.people-list { list-style: none; padding: 0; margin: 0; }
+.people-list li.person-card {
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.people-list li.person-card:last-child { border-bottom: none; }
+.person-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.person-name {
+  color: var(--amber); font-size: 15px; letter-spacing: 1px;
+  text-shadow: 0 0 8px var(--amber-glow);
+}
+.person-note {
+  margin-top: 6px; color: var(--text);
+  border-left: 2px solid var(--amber-dim);
+  padding-left: 10px; font-style: italic;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.person-actions {
+  margin-top: 8px; display: flex; gap: 12px;
+}
 
 /* ---------- Badges ---------- */
 .badge {
@@ -424,118 +451,68 @@ body.logged-in::after {
   mix-blend-mode: overlay;
 }
 
-
-
-
-
-/* ---------- People on case ---------- */
-.people-list { list-style: none; padding: 0; margin: 0; }
-.people-list li.person-card {
-  padding: 12px 0; border-bottom: 1px solid var(--border);
-}
-.people-list li.person-card:last-child { border-bottom: none; }
-.person-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-}
-.person-name {
-  color: var(--amber); font-size: 15px; letter-spacing: 1px;
-  text-shadow: 0 0 8px var(--amber-glow);
-}
-.person-note {
-  margin-top: 6px; color: var(--text);
-  border-left: 2px solid var(--amber-dim);
-  padding-left: 10px; font-style: italic;
-  white-space: pre-wrap; word-wrap: break-word;
-}
-.person-actions {
-  margin-top: 8px; display: flex; gap: 12px;
-}
-
-
-
-
-
 /* ============================================================
-   MIS Loading Spinner System
+   Button Loading Circle — appears on the button itself
+   No text overlay. No page-wide "LOADING…"
    ============================================================ */
 
-/* Overlay for form submits */
-.mis-loader {
-  position: fixed; inset: 0;
-  background: rgba(7, 8, 10, 0.85);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
+.btn-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--amber);
+  border-top-color: transparent;
+  animation: misSpin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+/* Filled / primary buttons (amber background when spinning) — dark spinner */
+button.is-spinning,
+.primary.is-spinning {
+  color: #07080a;
+  background: var(--amber);
+  border-color: var(--amber);
+  opacity: 0.9;
+  cursor: wait;
+  pointer-events: none;
+  min-width: 48px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  opacity: 0;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+button.is-spinning .btn-spinner,
+.primary.is-spinning .btn-spinner {
+  border-color: #07080a;
+  border-top-color: transparent;
+}
+
+/* Danger buttons — dark spinner on red fill */
+.danger-btn.is-spinning {
+  background: var(--red);
+  color: #07080a;
+  border-color: var(--red);
+}
+.danger-btn.is-spinning .btn-spinner {
+  border-color: #07080a;
+  border-top-color: transparent;
+}
+
+/* Links — spinning circle replaces the label */
+a.is-spinning-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  opacity: 0.8;
 }
-.mis-loader.show {
-  opacity: 1;
-  pointer-events: all;
+a.is-spinning-link .btn-spinner {
+  border-color: var(--amber);
+  border-top-color: transparent;
 }
-.mis-loader-circle {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  border: 3px solid #ffb00022;
-  border-top-color: #ffb000;
-  border-right-color: #ffb000;
-  animation: misSpin 0.9s linear infinite;
-  box-shadow: 0 0 24px -4px #ffb00066;
-}
-.mis-loader-text {
-  color: #ffb000;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 4px;
-  text-transform: uppercase;
-  text-shadow: 0 0 10px #ffb00066;
-  animation: misPulse 1.4s ease-in-out infinite;
-}
+
 @keyframes misSpin {
   to { transform: rotate(360deg); }
 }
-@keyframes misPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-/* Inline spinner inside buttons */
-.btn-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  margin-right: 8px;
-  vertical-align: -2px;
-  animation: misSpin 0.7s linear infinite;
-}
-.btn-label { opacity: 0.85; }
-
-/* Disabled / spinning button look */
-button.is-spinning,
-button[disabled].is-spinning,
-.primary.is-spinning {
-  opacity: 0.75;
-  cursor: wait;
-  pointer-events: none;
-}
-
-/* Prevent multiple spinners via pseudo overlay */
-button.is-spinning::after,
-.primary.is-spinning::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-}
-button, .primary { position: relative; }
