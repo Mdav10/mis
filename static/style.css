@@ -450,3 +450,92 @@ body.logged-in::after {
 .person-actions {
   margin-top: 8px; display: flex; gap: 12px;
 }
+
+
+
+
+
+/* ============================================================
+   MIS Loading Spinner System
+   ============================================================ */
+
+/* Overlay for form submits */
+.mis-loader {
+  position: fixed; inset: 0;
+  background: rgba(7, 8, 10, 0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.mis-loader.show {
+  opacity: 1;
+  pointer-events: all;
+}
+.mis-loader-circle {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 3px solid #ffb00022;
+  border-top-color: #ffb000;
+  border-right-color: #ffb000;
+  animation: misSpin 0.9s linear infinite;
+  box-shadow: 0 0 24px -4px #ffb00066;
+}
+.mis-loader-text {
+  color: #ffb000;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px #ffb00066;
+  animation: misPulse 1.4s ease-in-out infinite;
+}
+@keyframes misSpin {
+  to { transform: rotate(360deg); }
+}
+@keyframes misPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Inline spinner inside buttons */
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  margin-right: 8px;
+  vertical-align: -2px;
+  animation: misSpin 0.7s linear infinite;
+}
+.btn-label { opacity: 0.85; }
+
+/* Disabled / spinning button look */
+button.is-spinning,
+button[disabled].is-spinning,
+.primary.is-spinning {
+  opacity: 0.75;
+  cursor: wait;
+  pointer-events: none;
+}
+
+/* Prevent multiple spinners via pseudo overlay */
+button.is-spinning::after,
+.primary.is-spinning::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+button, .primary { position: relative; }

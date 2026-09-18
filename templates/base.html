@@ -16,6 +16,12 @@
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
 
+<!-- Global loading overlay -->
+<div id="misLoader" class="mis-loader" aria-hidden="true">
+  <div class="mis-loader-circle"></div>
+  <div class="mis-loader-text">PROCESSING…</div>
+</div>
+
 {% if current_user.is_authenticated %}
 {% set active = request.endpoint %}
 <div class="classified-banner">◆ CLASSIFIED // MIS OPERATIONAL // EYES ONLY ◆</div>
@@ -77,62 +83,167 @@
 </div>
 
 <script>
-function toggleMenu() {
-  const m = document.getElementById('userMenu');
-  m.classList.toggle('open');
-}
-document.addEventListener('click', function(e){
-  const menu = document.getElementById('userMenu');
-  const btn = document.querySelector('.menu-btn');
-  if (!menu || !btn) return;
-  if (!menu.contains(e.target) && !btn.contains(e.target)) menu.classList.remove('open');
-});
-// Keyboard command palette (desktop)
-document.addEventListener('keydown', function(e){
-  if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-    e.preventDefault();
-    const p = document.getElementById('cmdPalette');
-    p.style.display = 'block';
-    document.getElementById('cmdInput').focus();
-    runCmd('');
-  }
-  if (e.key === 'Escape') {
-    const p = document.getElementById('cmdPalette');
-    if (p) p.style.display = 'none';
-  }
-});
-const CMDS = [
-  {label: 'Home', url: '{{ url_for("dashboard") }}'},
-  {label: 'Cases', url: '{{ url_for("cases") }}'},
-  {label: 'People & Places', url: '{{ url_for("entities") }}'},
-  {label: 'Connections', url: '{{ url_for("relationships") }}'},
-  {label: 'Contacts', url: '{{ url_for("contacts") }}'},
-  {label: 'Search', url: '{{ url_for("search") }}'},
-  {label: 'Briefing', url: '{{ url_for("briefing") }}'},
-  {label: 'Time-Locked Notes', url: '{{ url_for("drops") }}'},
-  {label: 'Activity Log', url: '{{ url_for("activity") }}'},
-  {label: 'Users', url: '{{ url_for("users") }}'},
-  {label: 'Change Password', url: '{{ url_for("change_password") }}'},
-  {label: 'Log Out', url: '{{ url_for("logout") }}'},
-];
-function runCmd(q) {
-  const res = document.getElementById('cmdResults');
-  const query = q.toLowerCase();
-  res.innerHTML = '';
-  CMDS.filter(c => c.label.toLowerCase().includes(query)).forEach(c => {
-    const li = document.createElement('li');
-    li.textContent = c.label;
-    li.onclick = () => location.href = c.url;
-    res.appendChild(li);
-  });
-}
-const ci = document.getElementById('cmdInput');
-if (ci) ci.addEventListener('input', e => runCmd(e.target.value));
+/* ============================================================
+   MIS Global Loading System
+   - Shows spinner inside every button/link clicked
+   - Shows full-screen overlay for form submits
+   - Prevents double-clicks
+   ============================================================ */
+(function () {
+  const overlay = document.getElementById('misLoader');
 
-// Register service worker for PWA
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
-}
+  function showOverlay(text) {
+    if (!overlay) return;
+    const t = overlay.querySelector('.mis-loader-text');
+    if (t) t.textContent = text || 'PROCESSING…';
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+
+  function hideOverlay() {
+    if (!overlay) return;
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  // Inject spinner inside a button and disable it
+  function spinButton(btn, label) {
+    if (!btn || btn.dataset.spinning === '1') return;
+    btn.dataset.spinning = '1';
+    btn.dataset.originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.classList.add('is-spinning');
+    btn.innerHTML = '<span class="btn-spinner"></span><span class="btn-label">' +
+                    (label || 'Working…') + '</span>';
+  }
+
+  // Attach listener to all forms — intercept submit
+  function wireForms() {
+    document.querySelectorAll('form').forEach(form => {
+      if (form.dataset.wired === '1') return;
+      form.dataset.wired = '1';
+
+      form.addEventListener('submit', function (e) {
+        // Let the native validation pass first
+        if (!form.checkValidity()) return;
+
+        // Find the submit button actually clicked, or the form's default one
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]') ||
+                          document.activeElement;
+
+        // Show spinner inside button
+        if (submitBtn && submitBtn.tagName === 'BUTTON') {
+          const label = submitBtn.textContent.trim().slice(0, 24) || 'Working…';
+          spinButton(submitBtn, label + '…');
+        }
+
+        // Show full-screen overlay for downloads or uploads
+        const isDownload = form.action && form.action.includes('/report');
+        const isUpload   = form.querySelector('input[type="file"]');
+        if (isDownload) showOverlay('ENCRYPTING PDF…');
+        else if (isUpload) showOverlay('UPLOADING…');
+        else showOverlay('SAVING…');
+
+        // Safety: never let overlay hang forever
+        setTimeout(() => { hideOverlay(); }, 30000);
+      });
+    });
+  }
+
+  // Attach spinner to every link that navigates
+  function wireLinks() {
+    document.querySelectorAll('a').forEach(a => {
+      if (a.dataset.wired === '1') return;
+      const href = a.getAttribute('href') || '';
+      // Skip anchors, JS, external new-tab links, and download links
+      if (!href || href.startsWith('#') || href.startsWith('javascript:') ||
+          a.target === '_blank' || a.hasAttribute('download')) return;
+
+      a.dataset.wired = '1';
+      a.addEventListener('click', function () {
+        // Brief overlay so user sees feedback during navigation
+        showOverlay('LOADING…');
+        setTimeout(() => hideOverlay(), 8000);
+      });
+    });
+  }
+
+  // Menu button — not a link, keep simple
+  function wireMenuButton() {
+    const btn = document.querySelector('.menu-btn');
+    if (btn) btn.dataset.wired = '1';
+  }
+
+  // Re-wire whenever the DOM changes (e.g. edit forms shown dynamically)
+  function wireAll() {
+    wireForms();
+    wireLinks();
+    wireMenuButton();
+  }
+
+  // Initial wire
+  document.addEventListener('DOMContentLoaded', wireAll);
+
+  // Watch for new nodes (edit forms revealed by JS, dynamic content, etc.)
+  const observer = new MutationObserver(() => wireAll());
+  document.addEventListener('DOMContentLoaded', () => {
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+
+  // Hide overlay when the page is restored from browser cache
+  window.addEventListener('pageshow', hideOverlay);
+  window.addEventListener('pagehide', hideOverlay);
+
+  // Command palette (keyboard on desktop, ignored on mobile)
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && document.activeElement.tagName !== 'INPUT' &&
+        document.activeElement.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      const p = document.getElementById('cmdPalette');
+      if (p) { p.style.display = 'block'; document.getElementById('cmdInput').focus(); runCmd(''); }
+    }
+    if (e.key === 'Escape') {
+      const p = document.getElementById('cmdPalette');
+      if (p) p.style.display = 'none';
+    }
+  });
+
+  const CMDS = [
+    {label: 'Home', url: '{{ url_for("dashboard") }}'},
+    {label: 'Cases', url: '{{ url_for("cases") }}'},
+    {label: 'People & Places', url: '{{ url_for("entities") }}'},
+    {label: 'Connections', url: '{{ url_for("relationships") }}'},
+    {label: 'Contacts', url: '{{ url_for("contacts") }}'},
+    {label: 'Search', url: '{{ url_for("search") }}'},
+    {label: 'Briefing', url: '{{ url_for("briefing") }}'},
+    {label: 'Time-Locked Notes', url: '{{ url_for("drops") }}'},
+    {label: 'Activity Log', url: '{{ url_for("activity") }}'},
+    {label: 'Users', url: '{{ url_for("users") }}'},
+    {label: 'Change Password', url: '{{ url_for("change_password") }}'},
+    {label: 'Log Out', url: '{{ url_for("logout") }}'},
+  ];
+  function runCmd(q) {
+    const res = document.getElementById('cmdResults');
+    if (!res) return;
+    res.innerHTML = '';
+    CMDS.filter(c => c.label.toLowerCase().includes((q || '').toLowerCase())).forEach(c => {
+      const li = document.createElement('li');
+      li.textContent = c.label;
+      li.onclick = () => { showOverlay('LOADING…'); location.href = c.url; };
+      res.appendChild(li);
+    });
+  }
+  const ci = document.getElementById('cmdInput');
+  if (ci) ci.addEventListener('input', e => runCmd(e.target.value));
+
+  // Service worker for PWA
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  }
+
+  // Expose for other scripts / debug
+  window.MIS = { showOverlay, hideOverlay, spinButton };
+})();
 </script>
 </body>
 </html>
