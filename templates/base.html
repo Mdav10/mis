@@ -7,20 +7,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MIS">
-<link rel="manifest" href="/manifest.json">
+<link rel="manifest" href="/manifest.json?v=9">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <title>{% block title %}MIS{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
 {% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
-
-<!-- Global loading overlay -->
-<div id="misLoader" class="mis-loader" aria-hidden="true">
-  <div class="mis-loader-circle"></div>
-  <div class="mis-loader-text">PROCESSING…</div>
-</div>
 
 {% if current_user.is_authenticated %}
 {% set active = request.endpoint %}
@@ -43,16 +37,16 @@
     <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">Users</a>
   </nav>
   <div class="user-menu">
-    <button type="button" class="menu-btn" onclick="toggleMenu()" aria-label="Menu">☰</button>
+    <button type="button" class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
     <div class="menu-dropdown" id="userMenu">
       <div class="menu-header">
         <div class="dim">Signed in as</div>
         <b>{{ current_user.username }}</b>
         <div class="dim">{{ current_user.clearance }}</div>
       </div>
-      <a href="{{ url_for('change_password') }}">🔑 Change Password</a>
-      <a href="{{ url_for('users') }}">👥 Manage Users</a>
-      <a href="{{ url_for('logout') }}" class="logout-link">⏻ Log Out</a>
+      <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
+      <a href="{{ url_for('users') }}" class="menu-link">👥 Manage Users</a>
+      <a href="{{ url_for('logout') }}" class="logout-link menu-link">⏻ Log Out</a>
     </div>
   </div>
 </header>
@@ -77,172 +71,107 @@
 </nav>
 {% endif %}
 
-<div id="cmdPalette" class="cmd-palette" style="display:none">
-  <input type="text" id="cmdInput" placeholder="Type a command… (cases, people, logout, password)">
-  <ul id="cmdResults"></ul>
-</div>
-
 <script>
 /* ============================================================
-   MIS Global Loading System
-   - Shows spinner inside every button/link clicked
-   - Shows full-screen overlay for form submits
-   - Prevents double-clicks
+   MIS v9 — Loading circle on every button + link
+   Menu button works. No blocking.
    ============================================================ */
 (function () {
-  const overlay = document.getElementById('misLoader');
 
-  function showOverlay(text) {
-    if (!overlay) return;
-    const t = overlay.querySelector('.mis-loader-text');
-    if (t) t.textContent = text || 'PROCESSING…';
-    overlay.classList.add('show');
-    overlay.setAttribute('aria-hidden', 'false');
-  }
-
-  function hideOverlay() {
-    if (!overlay) return;
-    overlay.classList.remove('show');
-    overlay.setAttribute('aria-hidden', 'true');
-  }
-
-  // Inject spinner inside a button and disable it
-  function spinButton(btn, label) {
-    if (!btn || btn.dataset.spinning === '1') return;
-    btn.dataset.spinning = '1';
-    btn.dataset.originalHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.classList.add('is-spinning');
-    btn.innerHTML = '<span class="btn-spinner"></span><span class="btn-label">' +
-                    (label || 'Working…') + '</span>';
-  }
-
-  // Attach listener to all forms — intercept submit
-  function wireForms() {
-    document.querySelectorAll('form').forEach(form => {
-      if (form.dataset.wired === '1') return;
-      form.dataset.wired = '1';
-
-      form.addEventListener('submit', function (e) {
-        // Let the native validation pass first
-        if (!form.checkValidity()) return;
-
-        // Find the submit button actually clicked, or the form's default one
-        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]') ||
-                          document.activeElement;
-
-        // Show spinner inside button
-        if (submitBtn && submitBtn.tagName === 'BUTTON') {
-          const label = submitBtn.textContent.trim().slice(0, 24) || 'Working…';
-          spinButton(submitBtn, label + '…');
-        }
-
-        // Show full-screen overlay for downloads or uploads
-        const isDownload = form.action && form.action.includes('/report');
-        const isUpload   = form.querySelector('input[type="file"]');
-        if (isDownload) showOverlay('ENCRYPTING PDF…');
-        else if (isUpload) showOverlay('UPLOADING…');
-        else showOverlay('SAVING…');
-
-        // Safety: never let overlay hang forever
-        setTimeout(() => { hideOverlay(); }, 30000);
-      });
+  /* ---------- 1. The ☰ menu button — MUST WORK ---------- */
+  const menuBtn  = document.getElementById('menuBtn');
+  const menuDrop = document.getElementById('userMenu');
+  if (menuBtn && menuDrop) {
+    menuBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      menuDrop.classList.toggle('open');
+    });
+    document.addEventListener('click', function (e) {
+      if (!menuDrop.contains(e.target) && !menuBtn.contains(e.target)) {
+        menuDrop.classList.remove('open');
+      }
     });
   }
 
-  // Attach spinner to every link that navigates
-  function wireLinks() {
-    document.querySelectorAll('a').forEach(a => {
-      if (a.dataset.wired === '1') return;
-      const href = a.getAttribute('href') || '';
-      // Skip anchors, JS, external new-tab links, and download links
-      if (!href || href.startsWith('#') || href.startsWith('javascript:') ||
-          a.target === '_blank' || a.hasAttribute('download')) return;
+  /* ---------- 2. Spinner helper ---------- */
+  function spin(el) {
+    if (!el || el.dataset.spinning === '1') return;
+    el.dataset.spinning = '1';
+    el.dataset.originalHtml = el.innerHTML;
 
-      a.dataset.wired = '1';
-      a.addEventListener('click', function () {
-        // Brief overlay so user sees feedback during navigation
-        showOverlay('LOADING…');
-        setTimeout(() => hideOverlay(), 8000);
-      });
-    });
-  }
-
-  // Menu button — not a link, keep simple
-  function wireMenuButton() {
-    const btn = document.querySelector('.menu-btn');
-    if (btn) btn.dataset.wired = '1';
-  }
-
-  // Re-wire whenever the DOM changes (e.g. edit forms shown dynamically)
-  function wireAll() {
-    wireForms();
-    wireLinks();
-    wireMenuButton();
-  }
-
-  // Initial wire
-  document.addEventListener('DOMContentLoaded', wireAll);
-
-  // Watch for new nodes (edit forms revealed by JS, dynamic content, etc.)
-  const observer = new MutationObserver(() => wireAll());
-  document.addEventListener('DOMContentLoaded', () => {
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
-
-  // Hide overlay when the page is restored from browser cache
-  window.addEventListener('pageshow', hideOverlay);
-  window.addEventListener('pagehide', hideOverlay);
-
-  // Command palette (keyboard on desktop, ignored on mobile)
-  document.addEventListener('keydown', function (e) {
-    if (e.key === '/' && document.activeElement.tagName !== 'INPUT' &&
-        document.activeElement.tagName !== 'TEXTAREA') {
-      e.preventDefault();
-      const p = document.getElementById('cmdPalette');
-      if (p) { p.style.display = 'block'; document.getElementById('cmdInput').focus(); runCmd(''); }
+    if (el.tagName === 'BUTTON' || el.classList.contains('primary')) {
+      el.disabled = true;
+      el.classList.add('is-spinning');
+      el.innerHTML = '<span class="btn-spinner"></span>';
+    } else if (el.tagName === 'A') {
+      el.classList.add('is-spinning-link');
+      el.innerHTML = '<span class="btn-spinner"></span>';
     }
-    if (e.key === 'Escape') {
-      const p = document.getElementById('cmdPalette');
-      if (p) p.style.display = 'none';
+  }
+
+  /* ---------- 3. Form submits — spin the submit button ---------- */
+  document.addEventListener('submit', function (e) {
+    const form = e.target;
+    if (!form.checkValidity()) return;
+    const btn = form.querySelector('button[type="submit"]')
+             || form.querySelector('button:not([type])')
+             || form.querySelector('input[type="submit"]');
+    if (btn && btn.tagName === 'BUTTON') spin(btn);
+  }, true);
+
+  /* ---------- 4. Non-form buttons (edit toggles, etc.) ---------- */
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    if (btn.id === 'menuBtn') return;
+    if (btn.closest('form')) return;
+    if (btn.dataset.noSpin === '1') return;
+    if (btn.type === 'button') {
+      const orig = btn.innerHTML;
+      btn.classList.add('is-spinning');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="btn-spinner"></span>';
+      setTimeout(function () {
+        btn.classList.remove('is-spinning');
+        btn.disabled = false;
+        btn.innerHTML = orig;
+      }, 600);
     }
   });
 
-  const CMDS = [
-    {label: 'Home', url: '{{ url_for("dashboard") }}'},
-    {label: 'Cases', url: '{{ url_for("cases") }}'},
-    {label: 'People & Places', url: '{{ url_for("entities") }}'},
-    {label: 'Connections', url: '{{ url_for("relationships") }}'},
-    {label: 'Contacts', url: '{{ url_for("contacts") }}'},
-    {label: 'Search', url: '{{ url_for("search") }}'},
-    {label: 'Briefing', url: '{{ url_for("briefing") }}'},
-    {label: 'Time-Locked Notes', url: '{{ url_for("drops") }}'},
-    {label: 'Activity Log', url: '{{ url_for("activity") }}'},
-    {label: 'Users', url: '{{ url_for("users") }}'},
-    {label: 'Change Password', url: '{{ url_for("change_password") }}'},
-    {label: 'Log Out', url: '{{ url_for("logout") }}'},
-  ];
-  function runCmd(q) {
-    const res = document.getElementById('cmdResults');
-    if (!res) return;
-    res.innerHTML = '';
-    CMDS.filter(c => c.label.toLowerCase().includes((q || '').toLowerCase())).forEach(c => {
-      const li = document.createElement('li');
-      li.textContent = c.label;
-      li.onclick = () => { showOverlay('LOADING…'); location.href = c.url; };
-      res.appendChild(li);
-    });
-  }
-  const ci = document.getElementById('cmdInput');
-  if (ci) ci.addEventListener('input', e => runCmd(e.target.value));
+  /* ---------- 5. Links — spin while navigating ---------- */
+  document.addEventListener('click', function (e) {
+    const a = e.target.closest('a');
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+    if (a.target === '_blank' || a.hasAttribute('download')) return;
+    if (a.classList.contains('link-btn')) return;
+    if (a.classList.contains('menu-link')) {
+      a.classList.add('is-spinning-link');
+      a.innerHTML = '<span class="btn-spinner"></span>';
+      return;
+    }
+    spin(a);
+  });
 
-  // Service worker for PWA
+  /* ---------- 6. Restore page if browser returns from cache ---------- */
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('.is-spinning, .is-spinning-link').forEach(function (el) {
+      el.classList.remove('is-spinning', 'is-spinning-link');
+      if (el.tagName === 'BUTTON') el.disabled = false;
+      if (el.dataset.originalHtml) el.innerHTML = el.dataset.originalHtml;
+      delete el.dataset.spinning;
+    });
+  });
+
+  /* ---------- 7. Kill old service workers, install fresh one ---------- */
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      regs.forEach(function (r) { r.unregister(); });
+    });
+    navigator.serviceWorker.register('/service-worker.js?v=9').catch(function () {});
   }
-
-  // Expose for other scripts / debug
-  window.MIS = { showOverlay, hideOverlay, spinButton };
 })();
 </script>
 </body>

@@ -1,5 +1,5 @@
 # ============================================================
-# MIS v7 — AES-256 PDF with embedded images + attached audio
+# MIS v10 — Full app with cache-busting service worker headers
 # ============================================================
 
 import os
@@ -496,7 +496,7 @@ def esc(s):
 
 
 # ============================================================
-# PDF BUILDER — text + images embedded, audio markers
+# PDF BUILDER
 # ============================================================
 def build_case_pdf(case: Case) -> bytes:
     buf = io.BytesIO()
@@ -548,15 +548,12 @@ def build_case_pdf(case: Case) -> bytes:
                     if para.strip():
                         story.append(Paragraph(esc(para), body))
 
-            # Embedded images
             for m in u.photos:
                 if m.kind == "photo":
                     try:
                         img = Image(io.BytesIO(m.data))
                         iw, ih = img.imageWidth, img.imageHeight
-                        max_w = 15 * cm
-                        max_h = 10 * cm
-                        ratio = min(max_w / iw, max_h / ih, 1.0)
+                        ratio = min((15 * cm) / iw, (10 * cm) / ih, 1.0)
                         img.drawWidth = iw * ratio
                         img.drawHeight = ih * ratio
                         story.append(Spacer(1, 0.15 * cm))
@@ -565,10 +562,9 @@ def build_case_pdf(case: Case) -> bytes:
                         story.append(Spacer(1, 0.15 * cm))
                     except Exception as e:
                         story.append(Paragraph(
-                            f"[Image attached but could not embed: {esc(m.filename)} — {esc(str(e))}]",
+                            f"[Image could not embed: {esc(m.filename)} — {esc(str(e))}]",
                             meta))
 
-            # Audio markers
             for m in u.photos:
                 if m.kind == "voice":
                     story.append(Paragraph(
@@ -602,19 +598,13 @@ def build_case_pdf(case: Case) -> bytes:
     return buf.getvalue()
 
 
-# ============================================================
-# PDF ENCRYPTION + ATTACHMENTS — standard AES-256
-# ============================================================
 def encrypt_pdf_with_attachments(pdf_bytes: bytes, password: str,
                                   attachments: list) -> bytes:
-    """Encrypt PDF with standard AES-256 and attach audio files.
-    attachments = list of dicts: {name, data, mime}"""
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     for page in reader.pages:
         writer.add_page(page)
 
-    # Attach audio files inside the PDF
     for att in attachments:
         try:
             writer.add_attachment(
@@ -624,11 +614,10 @@ def encrypt_pdf_with_attachments(pdf_bytes: bytes, password: str,
         except Exception as e:
             print(f"⚠️  Could not attach {att.get('name')}: {e}")
 
-    # Encrypt with standard AES-256
     writer.encrypt(
         user_password=password,
         owner_password=password,
-        permissions_flag=-1,   # allow everything once password entered
+        permissions_flag=-1,
         algorithm="AES-256",
     )
 
@@ -830,10 +819,8 @@ def case_report(cid):
         flash("Password required (min 6 chars).", "error")
         return redirect(url_for("case_detail", cid=cid))
 
-    # 1) Build plain printable PDF (text + embedded images)
     pdf_bytes = build_case_pdf(c)
 
-    # 2) Collect audio attachments
     attachments = []
     for u in c.updates:
         for m in u.photos:
@@ -844,7 +831,6 @@ def case_report(cid):
                     "mime": m.mimetype or "application/octet-stream",
                 })
 
-    # 3) Encrypt with AES-256 + embed attachments
     try:
         encrypted_pdf = encrypt_pdf_with_attachments(
             pdf_bytes, form.password.data, attachments
@@ -1290,18 +1276,23 @@ def user_delete(uid):
 
 
 # ============================================================
-# PWA — manifest + service worker
+# PWA — cache-busting headers
 # ============================================================
 @app.route("/manifest.json")
 def manifest():
-    return send_file(os.path.join(BASE_DIR, "static", "manifest.json"),
+    resp = send_file(os.path.join(BASE_DIR, "static", "manifest.json"),
                      mimetype="application/manifest+json")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 
 @app.route("/service-worker.js")
 def service_worker():
-    return send_file(os.path.join(BASE_DIR, "static", "service-worker.js"),
+    resp = send_file(os.path.join(BASE_DIR, "static", "service-worker.js"),
                      mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
 
 
 # ============================================================
