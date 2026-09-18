@@ -1,5 +1,5 @@
 # ============================================================
-# MIS v6 — Standard AES-256 PDF, Direct Downloads, People w/ Context
+# MIS v7 — AES-256 PDF with embedded images + attached audio
 # ============================================================
 
 import os
@@ -32,10 +32,9 @@ from sqlalchemy import or_, text, inspect
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib import colors
 
-# Standard PDF encryption via pypdf
 from pypdf import PdfReader, PdfWriter
 
 # ============================================================
@@ -492,8 +491,12 @@ def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def esc(s):
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 # ============================================================
-# PDF BUILDER — text only, printable
+# PDF BUILDER — text + images embedded, audio markers
 # ============================================================
 def build_case_pdf(case: Case) -> bytes:
     buf = io.BytesIO()
@@ -516,9 +519,6 @@ def build_case_pdf(case: Case) -> bytes:
     meta = ParagraphStyle("meta", parent=styles["BodyText"],
                           fontName="Helvetica-Oblique", fontSize=9,
                           textColor=colors.HexColor("#555555"))
-
-    def esc(s):
-        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     story = []
     story.append(Paragraph("MIS CASE FILE", h1))
@@ -547,16 +547,34 @@ def build_case_pdf(case: Case) -> bytes:
                 for para in (u.body or "").split("\n"):
                     if para.strip():
                         story.append(Paragraph(esc(para), body))
-            markers = []
+
+            # Embedded images
             for m in u.photos:
                 if m.kind == "photo":
-                    markers.append("[Photo attached]")
-                elif m.kind == "voice":
-                    markers.append("[Voice memo attached]")
-                else:
-                    markers.append(f"[{m.kind.capitalize()} attached]")
-            if markers:
-                story.append(Paragraph(" · ".join(markers), meta))
+                    try:
+                        img = Image(io.BytesIO(m.data))
+                        iw, ih = img.imageWidth, img.imageHeight
+                        max_w = 15 * cm
+                        max_h = 10 * cm
+                        ratio = min(max_w / iw, max_h / ih, 1.0)
+                        img.drawWidth = iw * ratio
+                        img.drawHeight = ih * ratio
+                        story.append(Spacer(1, 0.15 * cm))
+                        story.append(img)
+                        story.append(Paragraph(f"[Image: {esc(m.filename)}]", meta))
+                        story.append(Spacer(1, 0.15 * cm))
+                    except Exception as e:
+                        story.append(Paragraph(
+                            f"[Image attached but could not embed: {esc(m.filename)} — {esc(str(e))}]",
+                            meta))
+
+            # Audio markers
+            for m in u.photos:
+                if m.kind == "voice":
+                    story.append(Paragraph(
+                        f"[Voice memo attached: {esc(m.filename or 'audio')}] "
+                        f"— extract the attachment from this PDF to play.", meta))
+
             story.append(Spacer(1, 0.25 * cm))
     else:
         story.append(Paragraph("— no entries —", body))
@@ -584,20 +602,36 @@ def build_case_pdf(case: Case) -> bytes:
     return buf.getvalue()
 
 
-def encrypt_pdf(pdf_bytes: bytes, password: str) -> bytes:
-    """Re-encrypt a PDF with standard AES-256 password protection.
-    Any PDF reader (Adobe, Chrome, Firefox, mobile viewers) will prompt
-    for the password on open."""
+# ============================================================
+# PDF ENCRYPTION + ATTACHMENTS — standard AES-256
+# ============================================================
+def encrypt_pdf_with_attachments(pdf_bytes: bytes, password: str,
+                                  attachments: list) -> bytes:
+    """Encrypt PDF with standard AES-256 and attach audio files.
+    attachments = list of dicts: {name, data, mime}"""
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     for page in reader.pages:
         writer.add_page(page)
+
+    # Attach audio files inside the PDF
+    for att in attachments:
+        try:
+            writer.add_attachment(
+                filename=att["name"],
+                data=att["data"],
+            )
+        except Exception as e:
+            print(f"⚠️  Could not attach {att.get('name')}: {e}")
+
+    # Encrypt with standard AES-256
     writer.encrypt(
         user_password=password,
         owner_password=password,
-        permissions_flag=0,  # deny everything until password entered
+        permissions_flag=-1,   # allow everything once password entered
         algorithm="AES-256",
     )
+
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -796,17 +830,32 @@ def case_report(cid):
         flash("Password required (min 6 chars).", "error")
         return redirect(url_for("case_detail", cid=cid))
 
-    # 1) Build plain printable PDF
+    # 1) Build plain printable PDF (text + embedded images)
     pdf_bytes = build_case_pdf(c)
 
-    # 2) Encrypt with standard AES-256 password protection
+    # 2) Collect audio attachments
+    attachments = []
+    for u in c.updates:
+        for m in u.photos:
+            if m.kind == "voice" or (m.kind != "photo" and m.data):
+                attachments.append({
+                    "name": m.filename or f"memo_{m.id}.bin",
+                    "data": m.data,
+                    "mime": m.mimetype or "application/octet-stream",
+                })
+
+    # 3) Encrypt with AES-256 + embed attachments
     try:
-        encrypted_pdf = encrypt_pdf(pdf_bytes, form.password.data)
+        encrypted_pdf = encrypt_pdf_with_attachments(
+            pdf_bytes, form.password.data, attachments
+        )
     except Exception as e:
         flash(f"Encryption failed: {e}", "error")
         return redirect(url_for("case_detail", cid=cid))
 
-    audit("report_download", f"Case #{cid} — AES-256 PDF", actor=current_user.username)
+    audit("report_download",
+          f"Case #{cid} — AES-256 PDF ({len(attachments)} attachments)",
+          actor=current_user.username)
 
     safe_title = "".join(ch for ch in c.title if ch.isalnum() or ch in "-_")[:40] or "case"
     fname = f"MIS_{safe_title}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
@@ -817,10 +866,8 @@ def case_report(cid):
         as_attachment=True,
         download_name=fname,
     )
-    # Belt-and-suspenders: force attachment + no-cache
     resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
     resp.headers["Cache-Control"] = "no-store"
-    resp.headers["X-PWA-NoPrompt"] = "1"
     return resp
 
 
@@ -1097,6 +1144,117 @@ def drop_delete(did):
 
 
 # ============================================================
+# ROUTES — BRIEFING
+# ============================================================
+@app.route("/briefing")
+@login_required
+def briefing():
+    days = int(request.args.get("days", 1))
+    since = datetime.utcnow() - timedelta(days=days)
+    updates = db.session.execute(
+        db.select(Update).where(Update.happened_at >= since)
+        .order_by(Update.happened_at.desc())
+    ).scalars().all()
+    return render_template("briefing.html", days=days, since=since, updates=updates)
+
+
+@app.route("/briefing.pdf", methods=["POST"])
+@login_required
+def briefing_pdf():
+    form = ReportForm()
+    if not form.validate_on_submit():
+        flash("Password required.", "error")
+        return redirect(url_for("briefing"))
+
+    days = int(request.form.get("days", 1))
+    since = datetime.utcnow() - timedelta(days=days)
+    updates = db.session.execute(
+        db.select(Update).where(Update.happened_at >= since)
+        .order_by(Update.happened_at.asc())
+    ).scalars().all()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=2.0 * cm, rightMargin=2.0 * cm,
+                            topMargin=2.0 * cm, bottomMargin=2.0 * cm,
+                            title=f"MIS Briefing — {days}d")
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"],
+                        textColor=colors.HexColor("#111111"),
+                        fontName="Helvetica-Bold", fontSize=18)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"],
+                        textColor=colors.HexColor("#333333"),
+                        fontName="Helvetica-Bold", fontSize=12)
+    h3 = ParagraphStyle("h3", parent=styles["Heading3"],
+                        textColor=colors.HexColor("#111111"),
+                        fontName="Helvetica-Bold", fontSize=11)
+    body = ParagraphStyle("body", parent=styles["BodyText"],
+                          fontName="Helvetica", fontSize=10, leading=14)
+
+    story = [Paragraph("MIS BRIEFING", h1),
+             Paragraph(f"Last {days} day(s)", h2),
+             Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", body),
+             Spacer(1, 0.4 * cm)]
+
+    if not updates:
+        story.append(Paragraph("— no entries in this window —", body))
+    for u in updates:
+        c = db.session.get(Case, u.case_id)
+        story.append(Paragraph(
+            f"<b>{u.happened_at.strftime('%d %b %Y · %H:%M')}</b> — {esc(c.title) if c else '—'}",
+            h3))
+        if u.body:
+            for para in (u.body or "").split("\n"):
+                if para.strip():
+                    story.append(Paragraph(esc(para), body))
+        for m in u.photos:
+            if m.kind == "photo":
+                try:
+                    img = Image(io.BytesIO(m.data))
+                    iw, ih = img.imageWidth, img.imageHeight
+                    ratio = min((15 * cm) / iw, (10 * cm) / ih, 1.0)
+                    img.drawWidth = iw * ratio
+                    img.drawHeight = ih * ratio
+                    story.append(Spacer(1, 0.1 * cm))
+                    story.append(img)
+                except Exception:
+                    story.append(Paragraph(f"[Image: {esc(m.filename)}]", body))
+            elif m.kind == "voice":
+                story.append(Paragraph(f"[Voice memo: {esc(m.filename or 'audio')}]", body))
+        story.append(Spacer(1, 0.2 * cm))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+
+    attachments = []
+    for u in updates:
+        for m in u.photos:
+            if m.kind == "voice":
+                attachments.append({
+                    "name": m.filename or f"memo_{m.id}.bin",
+                    "data": m.data,
+                    "mime": m.mimetype or "application/octet-stream",
+                })
+
+    encrypted_pdf = encrypt_pdf_with_attachments(
+        pdf_bytes, form.password.data, attachments
+    )
+
+    audit("briefing_download", f"{days}d — AES-256 PDF", actor=current_user.username)
+
+    fname = f"MIS_Briefing_{days}d_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
+    resp = send_file(
+        io.BytesIO(encrypted_pdf),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=fname,
+    )
+    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ============================================================
 # ROUTES — USERS
 # ============================================================
 @app.route("/users", methods=["GET", "POST"])
@@ -1129,106 +1287,6 @@ def user_delete(uid):
     db.session.delete(u)
     db.session.commit()
     return redirect(url_for("users"))
-
-
-
-# ============================================================
-# ROUTES — BRIEFING (last N days of updates)
-# ============================================================
-@app.route("/briefing")
-@login_required
-def briefing():
-    days = int(request.args.get("days", 1))
-    since = datetime.utcnow() - timedelta(days=days)
-    updates = db.session.execute(
-        db.select(Update).where(Update.happened_at >= since)
-        .order_by(Update.happened_at.desc())
-    ).scalars().all()
-    return render_template("briefing.html", days=days, since=since, updates=updates)
-
-
-@app.route("/briefing.pdf", methods=["POST"])
-@login_required
-def briefing_pdf():
-    form = ReportForm()
-    if not form.validate_on_submit():
-        flash("Password required (min 6 chars).", "error")
-        return redirect(url_for("briefing"))
-
-    days = int(request.form.get("days", 1))
-    since = datetime.utcnow() - timedelta(days=days)
-
-    updates = db.session.execute(
-        db.select(Update).where(Update.happened_at >= since)
-        .order_by(Update.happened_at.asc())
-    ).scalars().all()
-
-    # Build PDF
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=2.0 * cm, rightMargin=2.0 * cm,
-                            topMargin=2.0 * cm, bottomMargin=2.0 * cm,
-                            title=f"MIS Briefing — {days}d")
-    styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1", parent=styles["Heading1"],
-                        textColor=colors.HexColor("#111111"),
-                        fontName="Helvetica-Bold", fontSize=18)
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"],
-                        textColor=colors.HexColor("#333333"),
-                        fontName="Helvetica-Bold", fontSize=12)
-    h3 = ParagraphStyle("h3", parent=styles["Heading3"],
-                        textColor=colors.HexColor("#111111"),
-                        fontName="Helvetica-Bold", fontSize=11)
-    body = ParagraphStyle("body", parent=styles["BodyText"],
-                          fontName="Helvetica", fontSize=10, leading=14)
-
-    def esc(s):
-        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    story = [Paragraph("MIS BRIEFING", h1),
-             Paragraph(f"Last {days} day(s)", h2),
-             Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", body),
-             Spacer(1, 0.4 * cm)]
-
-    if not updates:
-        story.append(Paragraph("— no entries in this window —", body))
-    for u in updates:
-        c = db.session.get(Case, u.case_id)
-        story.append(Paragraph(
-            f"<b>{u.happened_at.strftime('%d %b %Y · %H:%M')}</b> — {esc(c.title) if c else '—'}",
-            h3))
-        if u.body:
-            for para in (u.body or "").split("\n"):
-                if para.strip():
-                    story.append(Paragraph(esc(para), body))
-        markers = []
-        for m in u.photos:
-            if m.kind == "photo":
-                markers.append("[Photo attached]")
-            elif m.kind == "voice":
-                markers.append("[Voice attached]")
-        if markers:
-            story.append(Paragraph(" · ".join(markers), body))
-        story.append(Spacer(1, 0.2 * cm))
-
-    doc.build(story)
-    pdf_bytes = buf.getvalue()
-    encrypted_pdf = encrypt_pdf(pdf_bytes, form.password.data)
-
-    audit("briefing_download", f"{days}d — AES-256 PDF", actor=current_user.username)
-
-    fname = f"MIS_Briefing_{days}d_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
-    resp = send_file(
-        io.BytesIO(encrypted_pdf),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=fname,
-    )
-    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
 
 
 # ============================================================
