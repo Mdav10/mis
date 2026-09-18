@@ -63,35 +63,77 @@
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="dim">No entries yet. Log your first above.</p>{% endif %}
+  {% else %}<p class="dim">No entries yet.</p>{% endif %}
 </section>
 
 <section class="card">
-  <h2>◍ People &amp; Places</h2>
+  <h2>◍ People on this Case</h2>
+
   {% if case.links %}
-  <ul class="list">
+  <ul class="people-list">
     {% for link in case.links %}
-    <li>
-      <a href="{{ url_for('entity_detail', eid=link.entity.id) }}"><b>{{ link.entity.name }}</b></a>
-      <span class="badge">{{ link.entity.type }}</span>
-      <form method="POST" action="{{ url_for('case_entity_delete', link_id=link.id) }}"
-            onsubmit="return confirm('Remove from case?');" style="display:inline">
+    <li class="person-card">
+      <div class="person-head">
+        <b class="person-name">{{ link.entity.name }}</b>
+        <span class="badge">{{ link.role or 'Other' }}</span>
+      </div>
+      {% if link.note %}
+        <div class="person-note">{{ link.note }}</div>
+      {% endif %}
+      <div class="person-actions">
+        <button type="button" class="link-btn"
+                onclick="document.getElementById('edit-{{ link.id }}').style.display='block'">
+          edit
+        </button>
+        <form method="POST" action="{{ url_for('case_entity_delete', link_id=link.id) }}"
+              onsubmit="return confirm('Remove from case?');" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="link-btn">remove</button>
+        </form>
+      </div>
+
+      <form method="POST" action="{{ url_for('case_entity_edit', link_id=link.id) }}"
+            id="edit-{{ link.id }}" style="display:none; margin-top:10px;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="link-btn">remove</button>
+        <label>Role</label>
+        <select name="role">
+          {% set roles = ['Witness','Source / Contact','Family','Friend / Associate','Suspect','Victim','Officer / Authority','Other'] %}
+          {% for r in roles %}
+            <option value="{{ r }}" {% if link.role == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+        <label>What they said / what they are on this case</label>
+        <textarea name="note" rows="2">{{ link.note or '' }}</textarea>
+        <button class="primary">Save</button>
+        <button type="button" class="link-btn"
+                onclick="document.getElementById('edit-{{ link.id }}').style.display='none'">cancel</button>
       </form>
     </li>
     {% endfor %}
   </ul>
   {% else %}<p class="dim">Nobody attached yet.</p>{% endif %}
 
-  <form method="POST" action="{{ url_for('case_entity_add', cid=case.id) }}" class="inline-form">
+  <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
+
+  <h2 style="margin-top:6px;">◆ Add a Person</h2>
+  <form method="POST" action="{{ url_for('case_entity_add', cid=case.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input name="name" placeholder="Name" required>
-    <select name="type">
-      <option>Person</option><option>Place</option><option>Organisation</option>
-      <option>Vehicle</option><option>Event</option><option>Other</option>
+    <label>Name</label>
+    <input name="name" placeholder="e.g. John" required>
+    <label>Role</label>
+    <select name="role">
+      <option>Witness</option>
+      <option>Source / Contact</option>
+      <option>Family</option>
+      <option>Friend / Associate</option>
+      <option>Suspect</option>
+      <option>Victim</option>
+      <option>Officer / Authority</option>
+      <option selected>Other</option>
     </select>
-    <button class="primary">Attach</button>
+    <label>What they said / what they are on this case</label>
+    <textarea name="note" rows="2" placeholder="e.g. Said he saw the man enter the shop at 21:00."></textarea>
+    <button class="primary">◆ Add to Case</button>
   </form>
 </section>
 
@@ -113,12 +155,15 @@
 </section>
 
 <section class="card highlight">
-  <h2>🔐 Encrypted Export</h2>
-  <p class="dim">Generates an AES-256-GCM sealed PDF. Use the same password in Mpcipher to open it.</p>
-  <form method="POST" action="{{ url_for('case_report', cid=case.id) }}" class="inline-form">
+  <h2>🔐 Encrypted PDF Export</h2>
+  <p class="dim">Generates a printable PDF encrypted with standard AES-256.
+  Any PDF reader will ask for the password you set here. <b>Remember it</b> —
+  there is no recovery.</p>
+  <form method="POST" action="{{ url_for('case_report', cid=case.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="password" name="password" placeholder="Password (min 6)" required minlength="6">
-    <button class="primary">Download Encrypted PDF</button>
+    <label>PDF password (min 6 characters)</label>
+    <input type="password" name="password" required minlength="6" autocomplete="new-password">
+    <button class="primary big">⬇ Download PDF</button>
   </form>
 </section>
 

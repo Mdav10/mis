@@ -1,6 +1,5 @@
 # ============================================================
-# MIS v4 — Intelligence Platform (MI6/CIA-grade)
-# PWA-ready · Fixed media display · Logout · Change password
+# MIS v6 — Standard AES-256 PDF, Direct Downloads, People w/ Context
 # ============================================================
 
 import os
@@ -33,14 +32,11 @@ from sqlalchemy import or_, text, inspect
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib import colors
 
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+# Standard PDF encryption via pypdf
+from pypdf import PdfReader, PdfWriter
 
 # ============================================================
 # CONFIG
@@ -73,7 +69,6 @@ from flask_wtf.csrf import generate_csrf
 def _inject_csrf():
     return {"csrf_token": generate_csrf}
 
-# Template helper: get current time for "now" default
 @app.context_processor
 def _inject_now():
     return {"now": datetime.utcnow()}
@@ -178,7 +173,8 @@ class CaseEntity(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=False)
     entity_id = db.Column(db.Integer, db.ForeignKey("mis_entities.id"), nullable=False)
-    role = db.Column(db.String(80), default="Person")
+    role = db.Column(db.String(80), default="Other")
+    note = db.Column(db.Text, default="")
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     entity = db.relationship("Entity")
 
@@ -283,7 +279,8 @@ MIGRATIONS = {
         ("created_by", "VARCHAR(80) DEFAULT 'system'"),
     ],
     "mis_case_entities": [
-        ("role", "VARCHAR(80) DEFAULT 'Person'"),
+        ("role", "VARCHAR(80) DEFAULT 'Other'"),
+        ("note", "TEXT DEFAULT ''"),
     ],
 }
 
@@ -316,7 +313,6 @@ def delete_case_and_children(cid):
                 DELETE FROM mis_update_media
                 WHERE update_id IN (SELECT id FROM mis_updates WHERE case_id = :cid)
             """), {"cid": cid})
-
             rows = conn.execute(text("""
                 SELECT table_name FROM information_schema.columns
                 WHERE column_name = 'case_id'
@@ -329,7 +325,6 @@ def delete_case_and_children(cid):
                     conn.execute(text(f"DELETE FROM {tbl} WHERE case_id = :cid"), {"cid": cid})
                 except Exception as e:
                     print(f"⚠️  Skipped {tbl}: {e}")
-
             conn.execute(text("DELETE FROM mis_cases WHERE id = :cid"), {"cid": cid})
         return True, None
     except Exception as e:
@@ -476,8 +471,8 @@ class DeadDropForm(FlaskForm):
 
 
 class ReportForm(FlaskForm):
-    password = PasswordField("Encryption password", validators=[DataRequired(), Length(min=6)])
-    submit = SubmitField("Download encrypted PDF")
+    password = PasswordField("PDF password", validators=[DataRequired(), Length(min=6)])
+    submit = SubmitField("Download PDF")
 
 
 # ============================================================
@@ -498,109 +493,114 @@ def sha256_bytes(b: bytes) -> str:
 
 
 # ============================================================
-# PDF BUILDER
+# PDF BUILDER — text only, printable
 # ============================================================
 def build_case_pdf(case: Case) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
-                            topMargin=1.8 * cm, bottomMargin=1.8 * cm,
+                            leftMargin=2.0 * cm, rightMargin=2.0 * cm,
+                            topMargin=2.0 * cm, bottomMargin=2.0 * cm,
                             title=f"MIS Report — {case.title}")
     styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#1f3a8a"))
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a8a"))
-    body = styles["BodyText"]
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"],
+                        textColor=colors.HexColor("#111111"),
+                        fontName="Helvetica-Bold", fontSize=18)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"],
+                        textColor=colors.HexColor("#333333"),
+                        fontName="Helvetica-Bold", fontSize=12)
+    h3 = ParagraphStyle("h3", parent=styles["Heading3"],
+                        textColor=colors.HexColor("#111111"),
+                        fontName="Helvetica-Bold", fontSize=11)
+    body = ParagraphStyle("body", parent=styles["BodyText"],
+                          fontName="Helvetica", fontSize=10, leading=14)
+    meta = ParagraphStyle("meta", parent=styles["BodyText"],
+                          fontName="Helvetica-Oblique", fontSize=9,
+                          textColor=colors.HexColor("#555555"))
+
+    def esc(s):
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     story = []
     story.append(Paragraph("MIS CASE FILE", h1))
-    story.append(Paragraph(case.title, h2))
+    story.append(Paragraph(esc(case.title), h2))
     if case.subject:
-        story.append(Paragraph(f"Subject: {case.subject}", body))
-    story.append(Paragraph(f"Status: {case.status}", body))
-    story.append(Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", body))
+        story.append(Paragraph(f"Subject: {esc(case.subject)}", body))
+    story.append(Paragraph(
+        f"Status: {esc(case.status)} · Threat: {esc(case.threat_level)} · Priority: {case.priority}",
+        body))
+    story.append(Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", meta))
     story.append(Spacer(1, 0.4 * cm))
 
     if case.notes:
-        story.append(Paragraph("Notes", h2))
-        story.append(Paragraph((case.notes or "").replace("\n", "<br/>"), body))
+        story.append(Paragraph("Case Notes", h2))
+        for para in (case.notes or "").split("\n"):
+            if para.strip():
+                story.append(Paragraph(esc(para), body))
         story.append(Spacer(1, 0.3 * cm))
 
-    story.append(Paragraph("History", h2))
-    updates = sorted(case.updates, key=lambda u: u.happened_at, reverse=True)
+    story.append(Paragraph("Chronological Record", h2))
+    updates = sorted(case.updates, key=lambda u: u.happened_at, reverse=False)
     if updates:
         for u in updates:
-            story.append(Paragraph(u.happened_at.strftime("%Y-%m-%d %H:%M"), h2))
+            story.append(Paragraph(u.happened_at.strftime("%d %b %Y · %H:%M"), h3))
             if u.body:
-                story.append(Paragraph(u.body.replace("\n", "<br/>"), body))
-            for p in u.photos:
-                story.append(Paragraph(f"[{p.kind.upper()}] {p.filename}", body))
-            story.append(Spacer(1, 0.2 * cm))
+                for para in (u.body or "").split("\n"):
+                    if para.strip():
+                        story.append(Paragraph(esc(para), body))
+            markers = []
+            for m in u.photos:
+                if m.kind == "photo":
+                    markers.append("[Photo attached]")
+                elif m.kind == "voice":
+                    markers.append("[Voice memo attached]")
+                else:
+                    markers.append(f"[{m.kind.capitalize()} attached]")
+            if markers:
+                story.append(Paragraph(" · ".join(markers), meta))
+            story.append(Spacer(1, 0.25 * cm))
     else:
-        story.append(Paragraph("— none —", body))
-
+        story.append(Paragraph("— no entries —", body))
     story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("People & Places", h2))
+
+    story.append(Paragraph("People on this Case", h2))
     if case.links:
         for link in case.links:
-            story.append(Paragraph(f"<b>{link.entity.name}</b> ({link.entity.type})", body))
+            e = link.entity
+            story.append(Paragraph(f"<b>{esc(e.name)}</b> — {esc(link.role or e.type)}", h3))
+            if link.note:
+                for para in (link.note or "").split("\n"):
+                    if para.strip():
+                        story.append(Paragraph(esc(para), body))
+            story.append(Spacer(1, 0.15 * cm))
     else:
         story.append(Paragraph("— none —", body))
 
-    doc.build(story)
-    return buf.getvalue()
-
-
-def build_briefing_pdf(days: int = 1) -> bytes:
-    since = datetime.utcnow() - timedelta(days=days)
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
-                            topMargin=1.8 * cm, bottomMargin=1.8 * cm)
-    styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#1f3a8a"))
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#1f3a8a"))
-    body = styles["BodyText"]
-
-    story = [Paragraph("MIS BRIEFING", h1),
-             Paragraph(f"Last {days} day(s) · {datetime.utcnow().isoformat()}Z", body),
-             Spacer(1, 0.4 * cm)]
-
-    ups = db.session.execute(
-        db.select(Update).where(Update.happened_at >= since)
-        .order_by(Update.happened_at.desc())
-    ).scalars().all()
-    story.append(Paragraph(f"Updates ({len(ups)})", h2))
-    for u in ups:
-        c = db.session.get(Case, u.case_id)
-        story.append(Paragraph(
-            f"<b>{u.happened_at.strftime('%Y-%m-%d %H:%M')} · {c.title if c else '—'}</b>", body))
-        story.append(Paragraph((u.body or "").replace("\n", "<br/>"), body))
-        story.append(Spacer(1, 0.15 * cm))
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(Paragraph(
+        "Handling: This file documents observations and information for lawful purposes. "
+        "If information indicates imminent risk, contact authorities.", meta))
 
     doc.build(story)
     return buf.getvalue()
 
 
-# ============================================================
-# ENCRYPTION
-# ============================================================
-MPC_MAGIC = b"MIS1"
-PBKDF2_ITERATIONS = 200_000
-
-
-def derive_key(password: str, salt: bytes) -> bytes:
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32,
-                     salt=salt, iterations=PBKDF2_ITERATIONS)
-    return kdf.derive(password.encode("utf-8"))
-
-
-def mpc_encrypt(plaintext: bytes, password: str) -> bytes:
-    salt = secrets.token_bytes(16)
-    nonce = secrets.token_bytes(12)
-    key = derive_key(password, salt)
-    aes = AESGCM(key)
-    ct = aes.encrypt(nonce, plaintext, associated_data=MPC_MAGIC)
-    return MPC_MAGIC + salt + nonce + ct
+def encrypt_pdf(pdf_bytes: bytes, password: str) -> bytes:
+    """Re-encrypt a PDF with standard AES-256 password protection.
+    Any PDF reader (Adobe, Chrome, Firefox, mobile viewers) will prompt
+    for the password on open."""
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.encrypt(
+        user_password=password,
+        owner_password=password,
+        permissions_flag=0,  # deny everything until password entered
+        algorithm="AES-256",
+    )
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 # ============================================================
@@ -619,7 +619,6 @@ def login():
             db.session.commit()
             login_user(user)
             audit("login_success", f"{user.username} logged in", actor=user.username)
-            session["boot"] = True
             return redirect(url_for("dashboard"))
         flash("Access denied. Check credentials.", "error")
     return render_template("login.html", form=form)
@@ -660,7 +659,6 @@ def dashboard():
     recent = db.session.execute(
         db.select(Update).order_by(Update.happened_at.desc()).limit(20)
     ).scalars().all()
-
     stats = {
         "cases": db.session.scalar(db.select(db.func.count(Case.id))) or 0,
         "updates": db.session.scalar(db.select(db.func.count(Update.id))) or 0,
@@ -797,11 +795,33 @@ def case_report(cid):
     if not form.validate_on_submit():
         flash("Password required (min 6 chars).", "error")
         return redirect(url_for("case_detail", cid=cid))
+
+    # 1) Build plain printable PDF
     pdf_bytes = build_case_pdf(c)
-    encrypted = mpc_encrypt(pdf_bytes, form.password.data)
-    fname = f"MIS_{c.title.replace(' ', '_')}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.mpcenc"
-    return send_file(io.BytesIO(encrypted), mimetype="application/octet-stream",
-                     as_attachment=True, download_name=fname)
+
+    # 2) Encrypt with standard AES-256 password protection
+    try:
+        encrypted_pdf = encrypt_pdf(pdf_bytes, form.password.data)
+    except Exception as e:
+        flash(f"Encryption failed: {e}", "error")
+        return redirect(url_for("case_detail", cid=cid))
+
+    audit("report_download", f"Case #{cid} — AES-256 PDF", actor=current_user.username)
+
+    safe_title = "".join(ch for ch in c.title if ch.isalnum() or ch in "-_")[:40] or "case"
+    fname = f"MIS_{safe_title}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
+
+    resp = send_file(
+        io.BytesIO(encrypted_pdf),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=fname,
+    )
+    # Belt-and-suspenders: force attachment + no-cache
+    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-PWA-NoPrompt"] = "1"
+    return resp
 
 
 # ============================================================
@@ -864,7 +884,6 @@ def update_media_delete(uid, mid):
 @app.route("/media/<int:mid>/view")
 @login_required
 def media_view(mid):
-    """Serve media inline (photo/video) — browser renders directly."""
     m = db.session.get(UpdateMedia, mid) or abort(404)
     mt = m.mimetype or "application/octet-stream"
     if m.kind == "photo" and not mt.startswith("image/"):
@@ -873,15 +892,6 @@ def media_view(mid):
         mt = "audio/webm"
     return send_file(io.BytesIO(m.data), mimetype=mt,
                      as_attachment=False, download_name=m.filename)
-
-
-@app.route("/media/<int:mid>/download")
-@login_required
-def media_download(mid):
-    m = db.session.get(UpdateMedia, mid) or abort(404)
-    return send_file(io.BytesIO(m.data),
-                     mimetype=m.mimetype or "application/octet-stream",
-                     as_attachment=True, download_name=m.filename)
 
 
 # ============================================================
@@ -927,15 +937,32 @@ def entity_delete(eid):
 def case_entity_add(cid):
     c = db.session.get(Case, cid) or abort(404)
     name = (request.form.get("name") or "").strip()
-    etype = request.form.get("type") or "Person"
+    role = (request.form.get("role") or "Other").strip()
+    note = (request.form.get("note") or "").strip()
     if name:
-        e = Entity(name=name, type=etype)
+        e = Entity(name=name, type="Person")
         db.session.add(e)
         db.session.flush()
-        db.session.add(CaseEntity(case_id=c.id, entity_id=e.id, role=etype))
+        db.session.add(CaseEntity(
+            case_id=c.id, entity_id=e.id, role=role, note=note
+        ))
         db.session.commit()
-        flash("Entity attached.", "success")
+        audit("case_entity_add", f"{name} ({role})", actor=current_user.username)
+        flash("Person added to case.", "success")
     return redirect(url_for("case_detail", cid=cid))
+
+
+@app.route("/case-entities/<int:link_id>/edit", methods=["POST"])
+@login_required
+def case_entity_edit(link_id):
+    link = db.session.get(CaseEntity, link_id) or abort(404)
+    role = (request.form.get("role") or link.role or "Other").strip()
+    note = (request.form.get("note") or "").strip()
+    link.role = role
+    link.note = note
+    db.session.commit()
+    flash("Person entry updated.", "success")
+    return redirect(url_for("case_detail", cid=link.case_id))
 
 
 @app.route("/case-entities/<int:link_id>/delete", methods=["POST"])
@@ -1070,36 +1097,6 @@ def drop_delete(did):
 
 
 # ============================================================
-# ROUTES — BRIEFING
-# ============================================================
-@app.route("/briefing")
-@login_required
-def briefing():
-    days = int(request.args.get("days", 1))
-    since = datetime.utcnow() - timedelta(days=days)
-    updates = db.session.execute(
-        db.select(Update).where(Update.happened_at >= since)
-        .order_by(Update.happened_at.desc())
-    ).scalars().all()
-    return render_template("briefing.html", days=days, since=since, updates=updates)
-
-
-@app.route("/briefing.pdf", methods=["POST"])
-@login_required
-def briefing_pdf():
-    form = ReportForm()
-    if not form.validate_on_submit():
-        flash("Password required.", "error")
-        return redirect(url_for("briefing"))
-    days = int(request.form.get("days", 1))
-    pdf_bytes = build_briefing_pdf(days)
-    encrypted = mpc_encrypt(pdf_bytes, form.password.data)
-    fname = f"MIS_Briefing_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.mpcenc"
-    return send_file(io.BytesIO(encrypted), mimetype="application/octet-stream",
-                     as_attachment=True, download_name=fname)
-
-
-# ============================================================
 # ROUTES — USERS
 # ============================================================
 @app.route("/users", methods=["GET", "POST"])
@@ -1135,7 +1132,7 @@ def user_delete(uid):
 
 
 # ============================================================
-# PWA — manifest + service worker served from root
+# PWA — manifest + service worker
 # ============================================================
 @app.route("/manifest.json")
 def manifest():

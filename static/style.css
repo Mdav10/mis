@@ -423,3 +423,30 @@ body.logged-in::after {
   opacity: 0.4;
   mix-blend-mode: overlay;
 }
+
+
+
+
+
+/* ---------- People on case ---------- */
+.people-list { list-style: none; padding: 0; margin: 0; }
+.people-list li.person-card {
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.people-list li.person-card:last-child { border-bottom: none; }
+.person-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.person-name {
+  color: var(--amber); font-size: 15px; letter-spacing: 1px;
+  text-shadow: 0 0 8px var(--amber-glow);
+}
+.person-note {
+  margin-top: 6px; color: var(--text);
+  border-left: 2px solid var(--amber-dim);
+  padding-left: 10px; font-style: italic;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.person-actions {
+  margin-top: 8px; display: flex; gap: 12px;
+}
