@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Backups{% endblock %}
+{% block content %}
+<h1>💾 Backups</h1>
+
+<section class="card highlight">
+  <h2>Create Encrypted Backup</h2>
+  <p class="dim">Downloads an encrypted archive of all case data. Store it somewhere safe. You'll need the password to restore.</p>
+  <form method="POST" action="{{ url_for('backup_create') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Backup password (min 8 chars)</label>
+    <input type="password" name="password" required minlength="8">
+    <button class="primary big">⬇ Create & Download Backup</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Backup History</h2>
+  {% if backups %}
+  <ul class="list">
+    {% for b in backups %}
+    <li>
+      <div style="flex:1 1 100%">
+        <b>{{ b.filename }}</b>
+        <div class="dim">{{ b.created_at.strftime('%d %b %Y · %H:%M') }} · {{ b.record_count }} cases · {{ '%.1f'|format(b.size_bytes / 1024) }} KB · by {{ b.created_by }}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">No backups yet.</p>{% endif %}
+</section>
+{% endblock %}

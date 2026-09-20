@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}My Sessions{% endblock %}
+{% block content %}
+<h1>🖥 My Sessions</h1>
+
+<section class="card">
+  <h2>Active sessions</h2>
+  <ul class="list">
+    {% for s in sessions %}
+    <li>
+      <div style="flex:1 1 100%">
+        <b>{{ s.ip or '—' }}</b>
+        <span class="badge">{{ 'Current' if s.session_id == current_sid else 'Other device' }}</span>
+        <div class="dim">{{ s.user_agent or 'unknown' }}</div>
+        <div class="dim">Started: {{ s.created_at.strftime('%d %b %Y · %H:%M') }} · Last seen: {{ s.last_seen.strftime('%d %b %Y · %H:%M') }}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="POST" onsubmit="return confirm('Revoke all other sessions?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="danger-btn">Revoke All Other Sessions</button>
+  </form>
+</section>
+{% endblock %}

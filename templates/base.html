@@ -7,11 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MIS">
-<link rel="manifest" href="/manifest.json?v=9">
+<link rel="manifest" href="/manifest.json?v=12">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <title>{% block title %}MIS{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=12">
 {% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
@@ -30,11 +30,15 @@
     <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}">People</a>
     <a href="{{ url_for('relationships') }}" class="{{ 'active' if active=='relationships' }}">Links</a>
     <a href="{{ url_for('contacts') }}" class="{{ 'active' if active=='contacts' }}">Contacts</a>
+    <a href="{{ url_for('map_view') }}" class="{{ 'active' if active=='map_view' }}">Map</a>
     <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">Search</a>
     <a href="{{ url_for('briefing') }}" class="{{ 'active' if active=='briefing' }}">Briefing</a>
     <a href="{{ url_for('drops') }}" class="{{ 'active' if active=='drops' }}">Locked</a>
+    {% if current_user.role == 'admin' %}
     <a href="{{ url_for('activity') }}" class="{{ 'active' if active=='activity' }}">Log</a>
     <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">Users</a>
+    <a href="{{ url_for('backups') }}" class="{{ 'active' if active=='backups' }}">Backups</a>
+    {% endif %}
   </nav>
   <div class="user-menu">
     <button type="button" class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
@@ -42,10 +46,16 @@
       <div class="menu-header">
         <div class="dim">Signed in as</div>
         <b>{{ current_user.username }}</b>
-        <div class="dim">{{ current_user.clearance }}</div>
+        <div class="dim">{{ current_user.role|upper }} · {{ current_user.clearance }}</div>
       </div>
+      <a href="{{ url_for('setup_2fa') }}" class="menu-link">🔐 {{ '2FA Enabled' if current_user.totp_enabled else 'Enable 2FA' }}</a>
       <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
+      <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
+      <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity Check</a>
+      {% if current_user.role == 'admin' %}
       <a href="{{ url_for('users') }}" class="menu-link">👥 Manage Users</a>
+      <a href="{{ url_for('backups') }}" class="menu-link">💾 Backups</a>
+      {% endif %}
       <a href="{{ url_for('logout') }}" class="logout-link menu-link">⏻ Log Out</a>
     </div>
   </div>
@@ -66,21 +76,15 @@
   <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}"><span class="ico">◉</span>Home</a>
   <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}"><span class="ico">◈</span>Cases</a>
   <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}"><span class="ico">◍</span>People</a>
+  <a href="{{ url_for('map_view') }}" class="{{ 'active' if active=='map_view' }}"><span class="ico">◌</span>Map</a>
   <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}"><span class="ico">◇</span>Search</a>
-  <a href="{{ url_for('activity') }}" class="{{ 'active' if active=='activity' }}"><span class="ico">▤</span>Log</a>
 </nav>
 {% endif %}
 
 <script>
-/* ============================================================
-   MIS v9 — Loading circle on every button + link
-   Menu button works. No blocking.
-   ============================================================ */
 (function () {
-
-  /* ---------- 1. The ☰ menu button — MUST WORK ---------- */
-  const menuBtn  = document.getElementById('menuBtn');
-  const menuDrop = document.getElementById('userMenu');
+  var menuBtn  = document.getElementById('menuBtn');
+  var menuDrop = document.getElementById('userMenu');
   if (menuBtn && menuDrop) {
     menuBtn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -93,12 +97,10 @@
     });
   }
 
-  /* ---------- 2. Spinner helper ---------- */
   function spin(el) {
     if (!el || el.dataset.spinning === '1') return;
     el.dataset.spinning = '1';
     el.dataset.originalHtml = el.innerHTML;
-
     if (el.tagName === 'BUTTON' || el.classList.contains('primary')) {
       el.disabled = true;
       el.classList.add('is-spinning');
@@ -109,25 +111,23 @@
     }
   }
 
-  /* ---------- 3. Form submits — spin the submit button ---------- */
   document.addEventListener('submit', function (e) {
-    const form = e.target;
+    var form = e.target;
     if (!form.checkValidity()) return;
-    const btn = form.querySelector('button[type="submit"]')
-             || form.querySelector('button:not([type])')
-             || form.querySelector('input[type="submit"]');
+    var btn = form.querySelector('button[type="submit"]') ||
+              form.querySelector('button:not([type])') ||
+              form.querySelector('input[type="submit"]');
     if (btn && btn.tagName === 'BUTTON') spin(btn);
   }, true);
 
-  /* ---------- 4. Non-form buttons (edit toggles, etc.) ---------- */
   document.addEventListener('click', function (e) {
-    const btn = e.target.closest('button');
+    var btn = e.target.closest('button');
     if (!btn) return;
     if (btn.id === 'menuBtn') return;
     if (btn.closest('form')) return;
     if (btn.dataset.noSpin === '1') return;
     if (btn.type === 'button') {
-      const orig = btn.innerHTML;
+      var orig = btn.innerHTML;
       btn.classList.add('is-spinning');
       btn.disabled = true;
       btn.innerHTML = '<span class="btn-spinner"></span>';
@@ -139,11 +139,10 @@
     }
   });
 
-  /* ---------- 5. Links — spin while navigating ---------- */
   document.addEventListener('click', function (e) {
-    const a = e.target.closest('a');
+    var a = e.target.closest('a');
     if (!a) return;
-    const href = a.getAttribute('href') || '';
+    var href = a.getAttribute('href') || '';
     if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
     if (a.target === '_blank' || a.hasAttribute('download')) return;
     if (a.classList.contains('link-btn')) return;
@@ -155,7 +154,6 @@
     spin(a);
   });
 
-  /* ---------- 6. Restore page if browser returns from cache ---------- */
   window.addEventListener('pageshow', function () {
     document.querySelectorAll('.is-spinning, .is-spinning-link').forEach(function (el) {
       el.classList.remove('is-spinning', 'is-spinning-link');
@@ -165,12 +163,11 @@
     });
   });
 
-  /* ---------- 7. Kill old service workers, install fresh one ---------- */
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations().then(function (regs) {
       regs.forEach(function (r) { r.unregister(); });
     });
-    navigator.serviceWorker.register('/service-worker.js?v=9').catch(function () {});
+    navigator.serviceWorker.register('/service-worker.js?v=12').catch(function () {});
   }
 })();
 </script>

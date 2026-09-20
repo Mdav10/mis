@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Two-Factor Auth{% endblock %}
+{% block content %}
+<h1>🔐 Two-Factor Authentication</h1>
+
+{% if backup_codes %}
+<section class="card highlight">
+  <h2>⚠ SAVE THESE BACKUP CODES NOW</h2>
+  <p class="dim">Each code works once. Store them offline. You will not see them again.</p>
+  <pre style="background:#000;padding:14px;border:1px solid var(--amber);border-radius:4px;font-size:14px;letter-spacing:2px;">{% for c in backup_codes %}{{ c }}
+{% endfor %}</pre>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Status: {{ 'Enabled ✓' if enabled else 'Disabled' }}</h2>
+  {% if enabled %}
+    <p>2FA is active. Every login will ask for a 6-digit code.</p>
+    <form method="POST" action="{{ url_for('disable_2fa') }}"
+          onsubmit="return confirm('Disable 2FA? This weakens security.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="danger-btn">Disable 2FA</button>
+    </form>
+  {% else %}
+    <p>Scan this QR code with <b>Google Authenticator</b>, <b>Authy</b>, or <b>Aegis</b>:</p>
+    <img src="data:image/png;base64,{{ qr_b64 }}" alt="QR"
+         style="display:block;margin:14px auto;background:#fff;padding:10px;border-radius:6px;max-width:260px;">
+    <p class="dim">Or enter this secret manually:</p>
+    <pre style="background:#000;padding:10px;border:1px solid var(--border);border-radius:4px;">{{ secret }}</pre>
+    <form method="POST">
+      {{ form.hidden_tag() }}
+      <label>Enter the 6-digit code from your app to confirm</label>
+      {{ form.code(placeholder="123456", inputmode="numeric") }}
+      <button class="primary big" style="width:100%">Enable 2FA</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

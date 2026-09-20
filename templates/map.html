@@ -1,41 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Field Map{% endblock %}
+{% block title %}Map{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  #map { height: 62vh; min-height: 420px; border: 1px solid var(--border); background: #000; }
-  .leaflet-container { background: #0a0a08 !important; }
+  #map { height: 70vh; min-height: 460px; border: 1px solid var(--border); background:#000; border-radius:4px; }
+  .leaflet-container { background:#000 !important; }
   .leaflet-tile { filter: brightness(0.6) contrast(1.3) hue-rotate(160deg); }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip {
-    background: var(--panel); color: var(--text); border: 1px solid var(--amber-dim);
-    border-radius: 2px; font-family: var(--mono);
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--amber-dim); border-radius: 4px; font-family: var(--mono);
   }
-  .leaflet-popup-content { font-size: 12px; }
-  .leaflet-control-attribution { background: #000 !important; color: var(--text-mute) !important; }
 </style>
 {% endblock %}
 {% block content %}
-<h1>Field Map</h1>
+<h1>◌ Field Map</h1>
 
 <section class="card">
-  <h2>Entities by Region · {{ markers|length }}</h2>
+  <h2>{{ markers|length }} located entities</h2>
   <div id="map"></div>
+</section>
+
+<section class="card">
+  <h2>Legend</h2>
+  <ul class="list">
+    <li><span class="badge" style="border-color:#3fb950;color:#3fb950">LOW</span> Cleared</li>
+    <li><span class="badge" style="border-color:#ffb000;color:#ffb000">MEDIUM</span> Monitor</li>
+    <li><span class="badge" style="border-color:#ff7b00;color:#ff7b00">HIGH</span> Watch</li>
+    <li><span class="badge" style="border-color:#ff3b30;color:#ff3b30">CRITICAL</span> Threat</li>
+  </ul>
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   const markers = {{ markers|tojson }};
   const map = L.map('map').setView([10, 20], 2);
-
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap · © CARTO',
-    subdomains: 'abcd', maxZoom: 19
+    attribution: '© OpenStreetMap · © CARTO', subdomains:'abcd', maxZoom:19
   }).addTo(map);
 
   markers.forEach(m => {
     L.circleMarker([m.lat, m.lng], {
-      radius: 7, color: m.color, fillColor: m.color,
-      fillOpacity: 0.7, weight: 2
+      radius: 8, color: m.color, fillColor: m.color, fillOpacity: 0.7, weight: 2
     }).addTo(map).bindPopup(
       `<b style="color:${m.color}">${m.name}</b><br>
        <span style="color:#8a8577">${m.type} · ${m.threat}</span><br>

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Integrity{% endblock %}
+{% block content %}
+<h1>✓ Integrity Check</h1>
+
+<section class="card">
+  {% if issues %}
+  <h2 style="color:var(--red)">⚠ {{ issues|length }} Issue(s) Detected</h2>
+  <p class="dim">The following records failed integrity verification. Possible tampering or corruption.</p>
+  <ul class="list">
+    {% for kind, id, label in issues %}
+    <li>
+      <div><b style="color:var(--red)">{{ kind|upper }} #{{ id }}</b> — {{ label }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <h2 style="color:var(--green)">✓ All Records Verified</h2>
+  <p>Every hashed record matches its expected value. No tampering detected.</p>
+  {% endif %}
+</section>
+{% endblock %}

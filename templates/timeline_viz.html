@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Timeline — {{ case.title }}{% endblock %}
+{% block head %}
+<style>
+  #tl-wrap { background:#000; border:1px solid var(--border); border-radius:4px; padding:20px; overflow-x:auto; }
+  #tl-svg { display:block; }
+  .tl-dot { cursor:pointer; transition: r 0.15s; }
+  .tl-dot:hover { r: 10; }
+  .tl-axis { stroke: var(--border-bright); }
+  .tl-tick { stroke: var(--border); }
+  .tl-label { fill: var(--text-dim); font-size: 10px; font-family: var(--mono); }
+</style>
+{% endblock %}
+{% block content %}
+<h1>◷ Timeline — {{ case.title }}</h1>
+
+<section class="card">
+  <h2>{{ events|length }} events</h2>
+  <div id="tl-wrap">
+    <svg id="tl-svg" width="100%" height="200"></svg>
+  </div>
+  <p class="dim" style="margin-top:10px">● size = media count · color = event density · tap a dot to open entry</p>
+</section>
+
+<section class="card">
+  <h2>Jump to Entry</h2>
+  <ul class="list">
+    {% for e in events %}
+    <li>
+      <a href="{{ url_for('case_detail', cid=case.id) }}#u-{{ e.id }}" style="flex:1 1 100%">
+        <b style="color:var(--amber)">{{ e.when }}</b>
+        <span class="dim">{{ e.body[:80] }}{% if e.body|length > 80 %}…{% endif %}</span>
+        <span class="badge">{{ e.media }} media</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<script>
+(function(){
+  const events = {{ events|tojson }};
+  if (!events.length) {
+    document.getElementById('tl-svg').outerHTML = '<p class="dim">No events to plot.</p>';
+    return;
+  }
+  const svg = document.getElementById('tl-svg');
+  const W = svg.clientWidth || 600;
+  const H = 200;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const pad = 40;
+
+  const ts = events.map(e => e.ts);
+  const min = Math.min(...ts), max = Math.max(...ts);
+  const span = (max - min) || 1;
+
+  // Axis
+  const axis = document.createElementNS('http://www.w3.org/2000/svg','line');
+  axis.setAttribute('x1', pad); axis.setAttribute('x2', W-pad);
+  axis.setAttribute('y1', H/2); axis.setAttribute('y2', H/2);
+  axis.setAttribute('class', 'tl-axis');
+  svg.appendChild(axis);
+
+  // Dots
+  events.forEach(e => {
+    const x = pad + ((e.ts - min) / span) * (W - 2*pad);
+    const r = Math.min(4 + (e.media * 2), 12);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', x);
+    c.setAttribute('cy', H/2);
+    c.setAttribute('r', r);
+    c.setAttribute('fill', e.voices ? '#ff7b00' : e.photos ? '#ffb000' : '#ffb00088');
+    c.setAttribute('class', 'tl-dot');
+    c.onclick = () => location.href = '{{ url_for("case_detail", cid=case.id) }}#u-' + e.id;
+    const t = document.createElementNS('http://www.w3.org/2000/svg','title');
+    t.textContent = e.when + ' — ' + e.body;
+    c.appendChild(t);
+    svg.appendChild(c);
+  });
+
+  // Date labels
+  const first = new Date(min*1000).toLocaleDateString();
+  const last  = new Date(max*1000).toLocaleDateString();
+  const t1 = document.createElementNS('http://www.w3.org/2000/svg','text');
+  t1.setAttribute('x', pad); t1.setAttribute('y', H-10);
+  t1.setAttribute('class','tl-label'); t1.textContent = first;
+  svg.appendChild(t1);
+  const t2 = document.createElementNS('http://www.w3.org/2000/svg','text');
+  t2.setAttribute('x', W-pad); t2.setAttribute('y', H-10);
+  t2.setAttribute('text-anchor','end'); t2.setAttribute('class','tl-label');
+  t2.textContent = last;
+  svg.appendChild(t2);
+})();
+</script>
+{% endblock %}
