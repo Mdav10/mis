@@ -1,32 +1,109 @@
 {% extends "base.html" %}
-{% block title %}People & Places{% endblock %}
+{% block title %}People{% endblock %}
 {% block content %}
-<h1>◍ People &amp; Places</h1>
+<h1>◍ People</h1>
+
 <section class="card">
-  <h2>◆ Add</h2>
+  <h2>◆ Add a Person</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
-    <label>Name</label>{{ form.name() }}
+    <label>Name</label>{{ form.name(placeholder="e.g. John Doe") }}
     <label>Type</label>{{ form.type() }}
-    <label>Notes</label>{{ form.notes(rows=2) }}
-    <label>Region (optional)</label>{{ form.region() }}
-    <button class="primary">Save</button>
+    <label>Where is he now / last known location</label>
+    {{ form.region(placeholder="e.g. Kampala, Uganda") }}
+    <label>Why I saved him (reason / note)</label>
+    {{ form.notes(rows=3, placeholder="e.g. Suspect in the Apac case. Seen at the market on 15 Sep. Speaking with a witness.") }}
+    <div class="row">
+      <div><label>Latitude (optional)</label>{{ form.latitude() }}</div>
+      <div><label>Longitude (optional)</label>{{ form.longitude() }}</div>
+      <div></div>
+    </div>
+    <button class="primary big">◆ Save Person</button>
   </form>
 </section>
+
 <section class="card">
-  <h2>◍ All</h2>
-  {% if people %}<ul class="list">
-    {% for p in people %}
-    <li>
-      <a href="{{ url_for('entity_detail', eid=p.id) }}"><b>{{ p.name }}</b></a>
-      <span class="badge">{{ p.type }}</span>
-      <form method="POST" action="{{ url_for('entity_delete', eid=p.id) }}"
-            onsubmit="return confirm('Delete?');" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="link-btn">delete</button>
+  <h2>◆ All People ({{ people|length }})</h2>
+  {% if people %}
+  <ul class="people-list">
+    {% for item in people %}
+    {% set p = item.person %}
+    <li class="person-card">
+      <div class="person-head">
+        <a href="{{ url_for('entity_detail', eid=p.id) }}"><b class="person-name">{{ p.name }}</b></a>
+        <span class="badge classified">{{ p.type }}</span>
+        {% if p.verified %}<span class="badge ok">VERIFIED</span>{% endif %}
+      </div>
+
+      {% if p.region %}
+      <div class="person-field">
+        <span class="field-label">📍 Where now:</span>
+        <span>{{ p.region }}</span>
+      </div>
+      {% endif %}
+
+      {% if p.notes %}
+      <div class="person-note">
+        <span class="field-label">◆ Why saved:</span>
+        {{ p.notes }}
+      </div>
+      {% endif %}
+
+      {% if item.links %}
+      <div class="person-field">
+        <span class="field-label">◈ On case(s):</span>
+        <div class="case-tags">
+          {% for link in item.links %}
+            <a href="{{ url_for('case_detail', cid=link.case_id) }}" class="case-tag">
+              {{ link.case.title if link.case else ('Case #' ~ link.case_id) }}
+              {% if link.role %} · {{ link.role }}{% endif %}
+            </a>
+            {% if link.note %}<div class="case-note">"{{ link.note }}"</div>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="person-actions">
+        <button type="button" class="link-btn" onclick="document.getElementById('edit-p-{{ p.id }}').style.display='block'">edit</button>
+        {% if current_user.role == 'top_secret' %}
+        <form method="POST" action="{{ url_for('entity_delete', eid=p.id) }}"
+              onsubmit="return confirm('Delete this person?');" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="link-btn">delete</button>
+        </form>
+        {% endif %}
+      </div>
+
+      <form method="POST" action="{{ url_for('entities') }}"
+            id="edit-p-{{ p.id }}" style="display:none;margin-top:10px;">
+        {{ form.hidden_tag() }}
+        <input type="hidden" name="entity_id" value="{{ p.id }}">
+        <label>Name</label>
+        <input name="name" value="{{ p.name }}" required>
+        <label>Type</label>
+        <select name="type">
+          {% for val, lab in [('Person','Person'),('Place','Place'),('Organisation','Organisation'),('Vehicle','Vehicle'),('Event','Event'),('Other','Other')] %}
+            <option value="{{ val }}" {% if p.type == val %}selected{% endif %}>{{ lab }}</option>
+          {% endfor %}
+        </select>
+        <label>Where is he now / last known location</label>
+        <input name="region" value="{{ p.region or '' }}">
+        <label>Why I saved him (reason / note)</label>
+        <textarea name="notes" rows="3">{{ p.notes or '' }}</textarea>
+        <div class="row">
+          <div><label>Latitude</label><input name="latitude" value="{{ p.latitude or '' }}"></div>
+          <div><label>Longitude</label><input name="longitude" value="{{ p.longitude or '' }}"></div>
+          <div></div>
+        </div>
+        <button class="primary">Save Changes</button>
+        <button type="button" class="link-btn" onclick="document.getElementById('edit-p-{{ p.id }}').style.display='none'">cancel</button>
       </form>
     </li>
     {% endfor %}
-  </ul>{% else %}<p class="dim">Nobody added yet.</p>{% endif %}
+  </ul>
+  {% else %}
+  <p class="dim">Nobody added yet.</p>
+  {% endif %}
 </section>
 {% endblock %}

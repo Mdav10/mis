@@ -1509,24 +1509,50 @@ def media_view(mid):
 # ============================================================
 # ENTITIES
 # ============================================================
+
 @app.route("/entities", methods=["GET", "POST"])
 @login_required
 def entities():
     form = EntityForm()
     if form.validate_on_submit():
-        e = Entity(name=form.name.data, type=form.type.data, region=form.region.data or "")
-        e.notes = form.notes.data or ""
-        try:
-            if form.latitude.data: e.latitude = float(form.latitude.data)
-            if form.longitude.data: e.longitude = float(form.longitude.data)
-        except Exception:
-            pass
-        db.session.add(e)
-        db.session.commit()
-        flash("Entity recorded.", "success")
+        # Update if ID given, else create
+        eid = request.form.get("entity_id", type=int)
+        if eid:
+            e = db.session.get(Entity, eid) or abort(404)
+            e.name = form.name.data
+            e.type = form.type.data
+            e.region = form.region.data or ""
+            e.notes = form.notes.data or ""
+            try:
+                if form.latitude.data: e.latitude = float(form.latitude.data)
+                if form.longitude.data: e.longitude = float(form.longitude.data)
+            except Exception:
+                pass
+            db.session.commit()
+            flash("Person updated.", "success")
+        else:
+            e = Entity(name=form.name.data, type=form.type.data, region=form.region.data or "")
+            e.notes = form.notes.data or ""
+            try:
+                if form.latitude.data: e.latitude = float(form.latitude.data)
+                if form.longitude.data: e.longitude = float(form.longitude.data)
+            except Exception:
+                pass
+            db.session.add(e)
+            db.session.commit()
+            audit("entity_create", e.name, actor=current_user.username)
+            flash("Person saved.", "success")
         return redirect(url_for("entities"))
+
     rows = db.session.execute(db.select(Entity).order_by(Entity.name)).scalars().all()
-    return render_template("people.html", form=form, people=rows)
+    # Attach case links per person
+    people_data = []
+    for p in rows:
+        links = db.session.execute(
+            db.select(CaseEntity).where(CaseEntity.entity_id == p.id)
+        ).scalars().all()
+        people_data.append({"person": p, "links": links})
+    return render_template("people.html", form=form, people=people_data)
 
 
 @app.route("/entities/<int:eid>")
@@ -1537,6 +1563,31 @@ def entity_detail(eid):
         db.select(CaseEntity).where(CaseEntity.entity_id == eid)
     ).scalars().all()
     return render_template("person_detail.html", entity=e, cases=cases)
+
+
+@app.route("/entities/<int:eid>/update", methods=["POST"])
+@login_required
+def entity_update(eid):
+    """Inline update of location or note, for quick edits from the list."""
+    e = db.session.get(Entity, eid) or abort(404)
+    if "region" in request.form:
+        e.region = (request.form.get("region") or "").strip()
+    if "notes" in request.form:
+        e.notes = (request.form.get("notes") or "").strip()
+    db.session.commit()
+    flash("Updated.", "success")
+    return redirect(request.referrer or url_for("entities"))
+
+
+
+
+
+
+
+
+
+
+
 
 
 @app.route("/entities/<int:eid>/delete", methods=["POST"])

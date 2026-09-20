@@ -7,11 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MIS">
-<link rel="manifest" href="/manifest.json?v=12">
+<link rel="manifest" href="/manifest.json?v=14">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <title>{% block title %}MIS{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=12">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=14">
 {% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
@@ -30,11 +30,13 @@
     <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}">People</a>
     <a href="{{ url_for('relationships') }}" class="{{ 'active' if active=='relationships' }}">Links</a>
     <a href="{{ url_for('contacts') }}" class="{{ 'active' if active=='contacts' }}">Contacts</a>
-    <a href="{{ url_for('map_view') }}" class="{{ 'active' if active=='map_view' }}">Map</a>
     <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">Search</a>
     <a href="{{ url_for('briefing') }}" class="{{ 'active' if active=='briefing' }}">Briefing</a>
     <a href="{{ url_for('drops') }}" class="{{ 'active' if active=='drops' }}">Locked</a>
-    {% if current_user.role == 'admin' %}
+    {% if current_user.role == 'analyst' %}
+    <a href="{{ url_for('analyst_workspace') }}" class="{{ 'active' if active=='analyst_workspace' }}">Analyst</a>
+    {% endif %}
+    {% if current_user.role == 'top_secret' %}
     <a href="{{ url_for('activity') }}" class="{{ 'active' if active=='activity' }}">Log</a>
     <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">Users</a>
     <a href="{{ url_for('backups') }}" class="{{ 'active' if active=='backups' }}">Backups</a>
@@ -46,13 +48,13 @@
       <div class="menu-header">
         <div class="dim">Signed in as</div>
         <b>{{ current_user.username }}</b>
-        <div class="dim">{{ current_user.role|upper }} · {{ current_user.clearance }}</div>
+        <div class="dim">{{ current_user.role|upper|replace('_',' ') }}</div>
       </div>
       <a href="{{ url_for('setup_2fa') }}" class="menu-link">🔐 {{ '2FA Enabled' if current_user.totp_enabled else 'Enable 2FA' }}</a>
       <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
       <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
       <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity Check</a>
-      {% if current_user.role == 'admin' %}
+      {% if current_user.role == 'top_secret' %}
       <a href="{{ url_for('users') }}" class="menu-link">👥 Manage Users</a>
       <a href="{{ url_for('backups') }}" class="menu-link">💾 Backups</a>
       {% endif %}
@@ -76,8 +78,11 @@
   <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}"><span class="ico">◉</span>Home</a>
   <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}"><span class="ico">◈</span>Cases</a>
   <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}"><span class="ico">◍</span>People</a>
-  <a href="{{ url_for('map_view') }}" class="{{ 'active' if active=='map_view' }}"><span class="ico">◌</span>Map</a>
   <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}"><span class="ico">◇</span>Search</a>
+  <a href="{{ url_for('activity') if current_user.role == 'top_secret' else url_for('briefing') }}"
+     class="{{ 'active' if active in ['activity','briefing'] }}">
+    <span class="ico">▤</span>{{ 'Log' if current_user.role == 'top_secret' else 'Briefing' }}
+  </a>
 </nav>
 {% endif %}
 
@@ -145,7 +150,7 @@
     var href = a.getAttribute('href') || '';
     if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
     if (a.target === '_blank' || a.hasAttribute('download')) return;
-    if (a.classList.contains('link-btn')) return;
+    if (a.classList.contains('link-btn') || a.classList.contains('case-tag')) return;
     if (a.classList.contains('menu-link')) {
       a.classList.add('is-spinning-link');
       a.innerHTML = '<span class="btn-spinner"></span>';
@@ -167,7 +172,7 @@
     navigator.serviceWorker.getRegistrations().then(function (regs) {
       regs.forEach(function (r) { r.unregister(); });
     });
-    navigator.serviceWorker.register('/service-worker.js?v=12').catch(function () {});
+    navigator.serviceWorker.register('/service-worker.js?v=14').catch(function () {});
   }
 })();
 </script>

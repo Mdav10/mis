@@ -2,15 +2,97 @@
 {% block title %}{{ entity.name }}{% endblock %}
 {% block content %}
 <h1>{{ entity.name }}</h1>
-<p><span class="badge">{{ entity.type }}</span>
-   {% if entity.region %}<span class="dim">— {{ entity.region }}</span>{% endif %}</p>
-{% if entity.notes %}<p>{{ entity.notes }}</p>{% endif %}
+
 <section class="card">
-  <h2>◈ Appears on</h2>
-  {% if cases %}<ul class="list">
+  <h2>◆ Profile</h2>
+  <p>
+    <span class="badge classified">{{ entity.type }}</span>
+    {% if entity.verified %}<span class="badge ok">VERIFIED</span>{% endif %}
+  </p>
+
+  <div class="person-field">
+    <span class="field-label">📍 Where now:</span>
+    <span>{{ entity.region or '— not recorded —' }}</span>
+  </div>
+
+  {% if entity.latitude and entity.longitude %}
+  <div class="person-field">
+    <span class="field-label">◌ Coordinates:</span>
+    <code>{{ '%.4f'|format(entity.latitude) }}, {{ '%.4f'|format(entity.longitude) }}</code>
+  </div>
+  {% endif %}
+
+  <div class="person-field">
+    <span class="field-label">◆ Why I saved him:</span>
+    {% if entity.notes %}
+      <div class="person-note" style="margin-top:6px;">{{ entity.notes }}</div>
+    {% else %}
+      <span class="dim">— no reason recorded —</span>
+    {% endif %}
+  </div>
+
+  <div class="person-field">
+    <span class="field-label">◈ Saved on:</span>
+    <span>{{ entity.created_at.strftime('%d %b %Y · %H:%M') }}</span>
+  </div>
+
+  {% if current_user.role == 'top_secret' %}
+  <div class="person-actions" style="margin-top:14px;">
+    <button type="button" class="link-btn" onclick="document.getElementById('edit-profile').style.display='block'">edit profile</button>
+  </div>
+  <form method="POST" action="{{ url_for('entities') }}"
+        id="edit-profile" style="display:none;margin-top:12px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="entity_id" value="{{ entity.id }}">
+    <label>Name</label><input name="name" value="{{ entity.name }}" required>
+    <label>Type</label>
+    <select name="type">
+      {% for val, lab in [('Person','Person'),('Place','Place'),('Organisation','Organisation'),('Vehicle','Vehicle'),('Event','Event'),('Other','Other')] %}
+        <option value="{{ val }}" {% if entity.type == val %}selected{% endif %}>{{ lab }}</option>
+      {% endfor %}
+    </select>
+    <label>Where is he now</label><input name="region" value="{{ entity.region or '' }}">
+    <label>Why I saved him</label><textarea name="notes" rows="3">{{ entity.notes or '' }}</textarea>
+    <div class="row">
+      <div><label>Latitude</label><input name="latitude" value="{{ entity.latitude or '' }}"></div>
+      <div><label>Longitude</label><input name="longitude" value="{{ entity.longitude or '' }}"></div>
+      <div></div>
+    </div>
+    <button class="primary">Save Changes</button>
+    <button type="button" class="link-btn" onclick="document.getElementById('edit-profile').style.display='none'">cancel</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>◈ Attached to Cases ({{ cases|length }})</h2>
+  {% if cases %}
+  <ul class="people-list">
     {% for link in cases %}
-    <li><a href="{{ url_for('case_detail', cid=link.case.id) }}">{{ link.case.title }}</a></li>
+    <li class="person-card">
+      <div class="person-head">
+        <a href="{{ url_for('case_detail', cid=link.case_id) }}">
+          <b class="person-name">{{ link.case.title if link.case else ('Case #' ~ link.case_id) }}</b>
+        </a>
+        {% if link.role %}<span class="badge classified">{{ link.role }}</span>{% endif %}
+      </div>
+      {% if link.note %}
+      <div class="person-note">
+        <span class="field-label">◆ What they said / why on this case:</span>
+        {{ link.note }}
+      </div>
+      {% endif %}
+      {% if link.case %}
+      <div class="person-field">
+        <span class="field-label">◷ Case status:</span>
+        <span>{{ link.case.status }} · Threat {{ link.case.threat_level }} · Priority {{ link.case.priority }}</span>
+      </div>
+      {% endif %}
+    </li>
     {% endfor %}
-  </ul>{% else %}<p class="dim">Not on any case yet.</p>{% endif %}
+  </ul>
+  {% else %}
+  <p class="dim">Not attached to any case yet.</p>
+  {% endif %}
 </section>
 {% endblock %}
