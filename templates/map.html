@@ -10,13 +10,23 @@
     background: var(--panel); color: var(--text);
     border: 1px solid var(--amber-dim); border-radius: 4px; font-family: var(--mono);
   }
+  .leaflet-control-attribution { background:#000 !important; color: var(--text-mute) !important; }
+  .world-btn {
+    position: absolute; top: 10px; right: 10px; z-index: 500;
+    background: rgba(7,8,10,0.9); color: var(--amber);
+    border: 1px solid var(--amber-dim); padding: 8px 12px;
+    border-radius: 4px; cursor: pointer; font-size: 11px;
+    letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .world-btn:hover { background: var(--amber-glow); }
 </style>
 {% endblock %}
 {% block content %}
 <h1>◌ Field Map</h1>
 
-<section class="card">
+<section class="card" style="position:relative;">
   <h2>{{ markers|length }} located entities</h2>
+  <button class="world-btn" onclick="worldView()">🌍 World View</button>
   <div id="map"></div>
 </section>
 
@@ -28,26 +38,43 @@
     <li><span class="badge" style="border-color:#ff7b00;color:#ff7b00">HIGH</span> Watch</li>
     <li><span class="badge" style="border-color:#ff3b30;color:#ff3b30">CRITICAL</span> Threat</li>
   </ul>
+  <p class="dim">Tap a dot for details. Use the World View button to see everything at once.</p>
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   const markers = {{ markers|tojson }};
-  const map = L.map('map').setView([10, 20], 2);
+
+  // World view: zoom 2, centered so Africa/Europe/Asia are visible
+  const WORLD_CENTER = [15, 25];
+  const WORLD_ZOOM = 2;
+
+  const map = L.map('map', {
+    worldCopyJump: true,
+    minZoom: 1,
+    maxZoom: 18,
+    backgroundColor: '#000',
+  }).setView(WORLD_CENTER, WORLD_ZOOM);
+
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap · © CARTO', subdomains:'abcd', maxZoom:19
+    attribution: '© OpenStreetMap · © CARTO', subdomains:'abcd'
   }).addTo(map);
 
   markers.forEach(m => {
     L.circleMarker([m.lat, m.lng], {
-      radius: 8, color: m.color, fillColor: m.color, fillOpacity: 0.7, weight: 2
+      radius: 8, color: m.color, fillColor: m.color, fillOpacity: 0.75, weight: 2
     }).addTo(map).bindPopup(
       `<b style="color:${m.color}">${m.name}</b><br>
        <span style="color:#8a8577">${m.type} · ${m.threat}</span><br>
        <span style="color:#5a564c">◍ ${m.region}</span><br>
-       <a href="/entities/${m.id}">Open profile →</a>`
+       <a href="/entities/${m.id}" style="color:#ffb000">Open profile →</a>`
     );
   });
+
+  // If markers exist, offer a "fit to markers" behavior on second tap
+  function worldView() {
+    map.setView(WORLD_CENTER, WORLD_ZOOM, { animate: true });
+  }
 
   if (!markers.length) {
     document.getElementById('map').innerHTML =

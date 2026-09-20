@@ -10,7 +10,8 @@
     <label>Username</label>{{ form.username() }}
     <label>Password</label>{{ form.password() }}
     <label>Display name</label>{{ form.codename() }}
-    <label>Clearance</label>{{ form.clearance() }}
+    <label>Email (optional)</label>{{ form.email() }}
+    <label>Role</label>{{ form.role() }}
     <button class="primary">Create User</button>
   </form>
 </section>
@@ -20,10 +21,19 @@
   <ul class="list">
     {% for u in users %}
     <li>
-      <b>{{ u.username }}</b>
-      {% if u.codename %}<span class="dim">— {{ u.codename }}</span>{% endif %}
-      <span class="badge">{{ u.clearance }}</span>
-      {% if u.id == current_user.id %}<span class="badge ok">you</span>{% endif %}
+      <div style="flex:1 1 100%">
+        <b>{{ u.username }}</b>
+        {% if u.codename %}<span class="dim">— {{ u.codename }}</span>{% endif %}
+        {% if u.role == 'top_secret' %}
+          <span class="badge warn">TOP SECRET</span>
+        {% elif u.role == 'analyst' %}
+          <span class="badge ok">ANALYST</span>
+        {% else %}
+          <span class="badge">AGENT</span>
+        {% endif %}
+        {% if u.totp_enabled %}<span class="badge ok">2FA ✓</span>{% else %}<span class="badge warn">2FA ✗</span>{% endif %}
+        {% if u.id == current_user.id %}<span class="badge">you</span>{% endif %}
+      </div>
       {% if u.id != current_user.id %}
       <form method="POST" action="{{ url_for('user_delete', uid=u.id) }}"
             onsubmit="return confirm('Remove user?');" style="display:inline">
@@ -33,6 +43,15 @@
       {% endif %}
     </li>
     {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <h2>◆ Role Permissions</h2>
+  <ul class="list">
+    <li><b>Top Secret</b> — Creates cases, assigns agents, sees everything, manages users &amp; backups.</li>
+    <li><b>Agent</b> — Sees only cases assigned to them. Adds updates, photos, voice, people.</li>
+    <li><b>Analyst</b> — Sees every case. Writes analysis notes. Cannot edit field updates.</li>
   </ul>
 </section>
 {% endblock %}

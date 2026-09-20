@@ -2,8 +2,9 @@
 {% block title %}Cases{% endblock %}
 {% block content %}
 <h1>◈ Cases</h1>
+
 <section class="card">
-  <h2>◆ Open New Case</h2>
+  <h2>◆ Open New Case &amp; Assign</h2>
   <form method="POST">
     {{ form.hidden_tag() }}
     <label>Case name</label>{{ form.title(placeholder="e.g. John Doe") }}
@@ -14,10 +15,12 @@
       <div><label>Priority</label>{{ form.priority() }}</div>
       <div><label>Threat</label>{{ form.threat_level() }}</div>
     </div>
+    <label>Assign to Agent</label>{{ form.assigned_agent_id() }}
     <label>Reminder</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}
-    <button class="primary big">◆ Open Case</button>
+    <button class="primary big">◆ Open &amp; Assign Case</button>
   </form>
 </section>
+
 <section class="card">
   <h2>◈ All Cases</h2>
   {% if cases %}<ul class="list">
@@ -27,6 +30,11 @@
         <b>{{ c.title }}</b>
         {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
       </a>
+      {% if c.assigned_agent %}
+        <span class="badge ok">→ {{ c.assigned_agent.username }}</span>
+      {% else %}
+        <span class="badge warn">UNASSIGNED</span>
+      {% endif %}
       <span class="badge">{{ c.updates|length }} entries</span>
     </li>
     {% endfor %}

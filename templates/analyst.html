@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Analyst Workspace{% endblock %}
+{% block content %}
+<h1>▣ Analyst Workspace</h1>
+
+<section class="card">
+  <h2>◈ All Cases (Read Access)</h2>
+  {% if cases %}
+  <ul class="list">
+    {% for c in cases %}
+    <li>
+      <a href="{{ url_for('case_detail', cid=c.id) }}" class="case-link">
+        <b>{{ c.title }}</b>
+        {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
+      </a>
+      <span class="badge">{{ c.updates|length }} entries</span>
+      <span class="badge">{{ c.analyst_notes|length }} notes</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">No cases.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>◆ My Filed Analysis ({{ my_notes|length }})</h2>
+  {% if my_notes %}
+  <ul class="updates">
+    {% for n in my_notes %}
+    <li>
+      <div class="upd-head">
+        <span class="upd-time">{{ n.created_at.strftime('%d %b %Y · %H:%M') }}</span>
+        <span class="badge classified">{{ n.category }}</span>
+      </div>
+      <div style="font-weight:600;color:var(--amber);margin:4px 0">{{ n.title }}</div>
+      <div class="upd-body">{{ n.body[:240] }}{% if n.body|length > 240 %}…{% endif %}</div>
+      <div class="dim" style="margin-top:4px">on case: <a href="{{ url_for('case_detail', cid=n.case_id) }}">{{ n.case.title }}</a></div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">You haven't filed any analysis yet.</p>{% endif %}
+</section>
+{% endblock %}

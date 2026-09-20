@@ -5,6 +5,13 @@
 <h1>{{ case.title }}</h1>
 {% if case.subject %}<p class="subtitle-line dim">Subject: {{ case.subject }}</p>{% endif %}
 
+{% if case.assigned_agent %}
+<p class="dim">Assigned Agent: <b style="color:var(--amber)">{{ case.assigned_agent.username }}</b></p>
+{% else %}
+<p class="dim">Unassigned</p>
+{% endif %}
+
+{% if current_user.role in ['top_secret', 'agent'] and (current_user.role == 'top_secret' or case.assigned_agent_id == current_user.id) %}
 <section class="card quick-add">
   <h2>◆ Log Entry for This Case</h2>
   <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data">
@@ -24,13 +31,14 @@
     <button class="primary big">◆ Save Entry</button>
   </form>
 </section>
+{% endif %}
 
 <section class="card">
   <h2>◷ Case Timeline</h2>
   {% if case.updates %}
   <ul class="updates">
     {% for u in case.updates %}
-    <li>
+    <li id="u-{{ u.id }}">
       <div class="upd-head">
         <span class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</span>
         <span class="dim">by {{ u.created_by }}</span>
@@ -52,6 +60,7 @@
         {% endfor %}
       </div>
       {% endif %}
+      {% if current_user.role == 'top_secret' or (current_user.role == 'agent' and case.assigned_agent_id == current_user.id) %}
       <div class="upd-actions">
         <a href="{{ url_for('update_edit', uid=u.id) }}">edit</a>
         <form method="POST" action="{{ url_for('update_delete', uid=u.id) }}"
@@ -60,15 +69,76 @@
           <button class="link-btn">delete</button>
         </form>
       </div>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>
   {% else %}<p class="dim">No entries yet.</p>{% endif %}
 </section>
 
+{# ---------- ANALYST WORKSPACE ---------- #}
+{% if current_user.role in ['top_secret', 'analyst'] %}
+<section class="card highlight">
+  <h2>▣ Analyst Workspace</h2>
+  <form method="POST" action="{{ url_for('analyst_add', cid=case.id) }}">
+    {{ analyst_form.hidden_tag() }}
+    <div class="row">
+      <div><label>Category</label>{{ analyst_form.category() }}</div>
+      <div style="grid-column:span 2"><label>Title</label>{{ analyst_form.title() }}</div>
+    </div>
+    <label>Analysis</label>{{ analyst_form.body(rows=4, placeholder="Reasoning, caveats, conclusions...") }}
+    <button class="primary">Save Analysis</button>
+  </form>
+
+  {% if case.analyst_notes %}
+  <h2 style="margin-top:24px;">Filed Analysis ({{ case.analyst_notes|length }})</h2>
+  <ul class="updates">
+    {% for n in case.analyst_notes %}
+    <li>
+      <div class="upd-head">
+        <span class="upd-time">{{ n.created_at.strftime('%d %b %Y · %H:%M') }}</span>
+        <span class="badge classified">{{ n.category }}</span>
+      </div>
+      <div style="font-weight:600;color:var(--amber);margin:4px 0">{{ n.title }}</div>
+      <div class="upd-body">{{ n.body }}</div>
+      <div class="dim" style="margin-top:6px">by {{ n.created_by }}</div>
+
+      {% if n.created_by == current_user.username or current_user.role == 'top_secret' %}
+      <div class="upd-actions">
+        <button type="button" class="link-btn" onclick="document.getElementById('edit-n-{{ n.id }}').style.display='block'">edit</button>
+        <form method="POST" action="{{ url_for('analyst_note_delete', nid=n.id) }}"
+              onsubmit="return confirm('Remove analysis?');" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="link-btn">delete</button>
+        </form>
+      </div>
+      <form method="POST" action="{{ url_for('analyst_note_edit', nid=n.id) }}"
+            id="edit-n-{{ n.id }}" style="display:none;margin-top:10px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Category</label>
+        <select name="category">
+          {% for c in ['FACT','CLAIM','CORROBORATED','UNVERIFIED','ASSESSMENT','QUESTION','CONTRADICTION'] %}
+            <option value="{{ c }}" {% if n.category==c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        <label>Title</label>
+        <input name="title" value="{{ n.title }}">
+        <label>Body</label>
+        <textarea name="body" rows="3">{{ n.body }}</textarea>
+        <button class="primary">Save</button>
+        <button type="button" class="link-btn" onclick="document.getElementById('edit-n-{{ n.id }}').style.display='none'">cancel</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">No analysis filed yet.</p>{% endif %}
+</section>
+{% endif %}
+
+{# ---------- PEOPLE ---------- #}
 <section class="card">
   <h2>◍ People on this Case</h2>
-
   {% if case.links %}
   <ul class="people-list">
     {% for link in case.links %}
@@ -77,44 +147,37 @@
         <b class="person-name">{{ link.entity.name }}</b>
         <span class="badge">{{ link.role or 'Other' }}</span>
       </div>
-      {% if link.note %}
-        <div class="person-note">{{ link.note }}</div>
-      {% endif %}
+      {% if link.note %}<div class="person-note">{{ link.note }}</div>{% endif %}
+      {% if current_user.role == 'top_secret' or (current_user.role == 'agent' and case.assigned_agent_id == current_user.id) %}
       <div class="person-actions">
-        <button type="button" class="link-btn"
-                onclick="document.getElementById('edit-{{ link.id }}').style.display='block'">
-          edit
-        </button>
+        <button type="button" class="link-btn" onclick="document.getElementById('edit-{{ link.id }}').style.display='block'">edit</button>
         <form method="POST" action="{{ url_for('case_entity_delete', link_id=link.id) }}"
               onsubmit="return confirm('Remove from case?');" style="display:inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="link-btn">remove</button>
         </form>
       </div>
-
       <form method="POST" action="{{ url_for('case_entity_edit', link_id=link.id) }}"
-            id="edit-{{ link.id }}" style="display:none; margin-top:10px;">
+            id="edit-{{ link.id }}" style="display:none;margin-top:10px;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>Role</label>
         <select name="role">
           {% set roles = ['Witness','Source / Contact','Family','Friend / Associate','Suspect','Victim','Officer / Authority','Other'] %}
-          {% for r in roles %}
-            <option value="{{ r }}" {% if link.role == r %}selected{% endif %}>{{ r }}</option>
-          {% endfor %}
+          {% for r in roles %}<option value="{{ r }}" {% if link.role == r %}selected{% endif %}>{{ r }}</option>{% endfor %}
         </select>
         <label>What they said / what they are on this case</label>
         <textarea name="note" rows="2">{{ link.note or '' }}</textarea>
         <button class="primary">Save</button>
-        <button type="button" class="link-btn"
-                onclick="document.getElementById('edit-{{ link.id }}').style.display='none'">cancel</button>
+        <button type="button" class="link-btn" onclick="document.getElementById('edit-{{ link.id }}').style.display='none'">cancel</button>
       </form>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>
   {% else %}<p class="dim">Nobody attached yet.</p>{% endif %}
 
+  {% if current_user.role == 'top_secret' or (current_user.role == 'agent' and case.assigned_agent_id == current_user.id) %}
   <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
-
   <h2 style="margin-top:6px;">◆ Add a Person</h2>
   <form method="POST" action="{{ url_for('case_entity_add', cid=case.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -122,21 +185,18 @@
     <input name="name" placeholder="e.g. John" required>
     <label>Role</label>
     <select name="role">
-      <option>Witness</option>
-      <option>Source / Contact</option>
-      <option>Family</option>
-      <option>Friend / Associate</option>
-      <option>Suspect</option>
-      <option>Victim</option>
-      <option>Officer / Authority</option>
-      <option selected>Other</option>
+      <option>Witness</option><option>Source / Contact</option><option>Family</option>
+      <option>Friend / Associate</option><option>Suspect</option><option>Victim</option>
+      <option>Officer / Authority</option><option selected>Other</option>
     </select>
     <label>What they said / what they are on this case</label>
     <textarea name="note" rows="2" placeholder="e.g. Said he saw the man enter the shop at 21:00."></textarea>
     <button class="primary">◆ Add to Case</button>
   </form>
+  {% endif %}
 </section>
 
+{% if current_user.role == 'top_secret' %}
 <section class="card">
   <h2>⚙ Case Settings</h2>
   <form method="POST">
@@ -149,34 +209,42 @@
       <div><label>Priority</label>{{ form.priority() }}</div>
       <div><label>Threat</label>{{ form.threat_level() }}</div>
     </div>
+    <label>Assign to Agent</label>{{ form.assigned_agent_id() }}
     <label>Reminder</label>{{ form.due_date(placeholder='YYYY-MM-DD HH:MM') }}
     <button class="primary">Save Settings</button>
   </form>
 </section>
+{% endif %}
 
 <section class="card highlight">
   <h2>🔐 Encrypted PDF Export</h2>
-  <p class="dim">Generates a printable PDF encrypted with standard AES-256.
-  Any PDF reader will ask for the password you set here. <b>Remember it</b> —
-  there is no recovery.</p>
   <form method="POST" action="{{ url_for('case_report', cid=case.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>PDF password (min 6 characters)</label>
+    <label>PDF password (min 6 chars)</label>
     <input type="password" name="password" required minlength="6" autocomplete="new-password">
+    <label>Template</label>
+    <select name="template">
+      <option value="full">Full Case File</option>
+      <option value="summary">Executive Summary</option>
+      <option value="timeline">Timeline Only</option>
+      <option value="person">Person Profile</option>
+      <option value="evidence">Evidence Register</option>
+      <option value="gaps">Gap Analysis</option>
+    </select>
     <button class="primary big">⬇ Download PDF</button>
   </form>
 </section>
 
+{% if current_user.role == 'top_secret' %}
 <form method="POST" action="{{ url_for('case_delete', cid=case.id) }}"
       onsubmit="return confirm('Delete this case and all its entries?');">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <button class="danger-btn" style="width:100%">⏻ Delete Case</button>
 </form>
+{% endif %}
 
 <script>
 (function(){
-  // Ensure "When" fields always reflect LOCAL time, not server time.
-  // Runs on any field that is empty.
   var pad = function(n){ return n<10 ? '0'+n : ''+n; };
   var d = new Date();
   var localStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())

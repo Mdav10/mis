@@ -7,13 +7,15 @@
 <section class="card highlight">
   <h2>⚠ SAVE THESE BACKUP CODES NOW</h2>
   <p class="dim">Each code works once. Store them offline. You will not see them again.</p>
-  <pre style="background:#000;padding:14px;border:1px solid var(--amber);border-radius:4px;font-size:14px;letter-spacing:2px;">{% for c in backup_codes %}{{ c }}
+  <pre style="background:#000;padding:14px;border:1px solid var(--amber);border-radius:4px;font-size:14px;letter-spacing:2px;user-select:all;">{% for c in backup_codes %}{{ c }}
 {% endfor %}</pre>
+  <button type="button" onclick="copyBackup()" class="primary">📋 Copy All</button>
 </section>
 {% endif %}
 
 <section class="card">
   <h2>Status: {{ 'Enabled ✓' if enabled else 'Disabled' }}</h2>
+
   {% if enabled %}
     <p>2FA is active. Every login will ask for a 6-digit code.</p>
     <form method="POST" action="{{ url_for('disable_2fa') }}"
@@ -21,18 +23,64 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="danger-btn">Disable 2FA</button>
     </form>
+
   {% else %}
-    <p>Scan this QR code with <b>Google Authenticator</b>, <b>Authy</b>, or <b>Aegis</b>:</p>
-    <img src="data:image/png;base64,{{ qr_b64 }}" alt="QR"
-         style="display:block;margin:14px auto;background:#fff;padding:10px;border-radius:6px;max-width:260px;">
-    <p class="dim">Or enter this secret manually:</p>
-    <pre style="background:#000;padding:10px;border:1px solid var(--border);border-radius:4px;">{{ secret }}</pre>
+    <p><b>Step 1 — Open your authenticator app</b></p>
+    <p class="dim">Google Authenticator, Aegis, Authy, Microsoft Authenticator — any TOTP app works.</p>
+
+    <p style="margin-top:16px;"><b>Step 2 — Try this shortcut (Android)</b></p>
+    <p class="dim">If you have an authenticator app installed, tapping the button below jumps into it with the code ready:</p>
+    <a href="{{ otp_uri }}" class="primary" style="display:block;text-align:center;text-decoration:none;margin:10px 0;">
+      ▶ Add to Authenticator App
+    </a>
+
+    <p style="margin-top:16px;"><b>Step 3 — Or enter the secret manually</b></p>
+    <p class="dim">If the shortcut doesn't work, copy this secret and paste it into your app's "enter key manually" option:</p>
+
+    <div style="background:#000;padding:16px;border:1px solid var(--amber);border-radius:4px;margin:10px 0;text-align:center;">
+      <code id="secretBox" style="font-size:18px;letter-spacing:3px;user-select:all;color:var(--amber);word-break:break-all;">{{ secret }}</code>
+    </div>
+
+    <button type="button" onclick="copySecret()" class="primary" style="width:100%;">📋 Copy Secret</button>
+    <p id="copyMsg" class="dim" style="text-align:center;margin-top:6px;"></p>
+
+    <p class="dim" style="margin-top:20px;">
+      In your app, choose <b>Add account</b> → <b>Enter setup key</b> (or <b>Enter key manually</b>), paste the secret,
+      set the account name to <b>MIS</b>, and save.
+    </p>
+
+    <p style="margin-top:16px;"><b>Step 4 — Confirm</b></p>
     <form method="POST">
       {{ form.hidden_tag() }}
-      <label>Enter the 6-digit code from your app to confirm</label>
-      {{ form.code(placeholder="123456", inputmode="numeric") }}
+      <label>Enter the 6-digit code shown in your app</label>
+      {{ form.code(placeholder="123456", inputmode="numeric", autocomplete="one-time-code") }}
       <button class="primary big" style="width:100%">Enable 2FA</button>
     </form>
   {% endif %}
 </section>
+
+<script>
+function copySecret() {
+  const t = document.getElementById('secretBox').textContent.trim();
+  navigator.clipboard.writeText(t).then(() => {
+    document.getElementById('copyMsg').textContent = '✓ Copied to clipboard';
+    setTimeout(() => document.getElementById('copyMsg').textContent = '', 3000);
+  }).catch(() => {
+    // fallback for older Android
+    const r = document.createRange();
+    r.selectNode(document.getElementById('secretBox'));
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(r);
+    document.getElementById('copyMsg').textContent = '✓ Selected — long-press to copy';
+  });
+}
+function copyBackup() {
+  const pre = document.querySelector('pre');
+  navigator.clipboard.writeText(pre.textContent).then(() => {
+    alert('✓ Backup codes copied. Save them somewhere safe!');
+  }).catch(() => {
+    alert('Long-press the codes above and copy manually.');
+  });
+}
+</script>
 {% endblock %}
