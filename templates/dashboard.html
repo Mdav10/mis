@@ -2,20 +2,44 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 
-<section class="stat-strip">
-  <div class="stat"><span class="num">{{ '%03d'|format(stats.cases) }}</span><span class="lbl">Cases</span></div>
-  <div class="stat"><span class="num">{{ '%03d'|format(stats.updates) }}</span><span class="lbl">Updates</span></div>
-  <div class="stat"><span class="num">{{ '%03d'|format(stats.media) }}</span><span class="lbl">Media</span></div>
-  <div class="stat"><span class="num">{{ '%03d'|format(stats.entities) }}</span><span class="lbl">People</span></div>
-  <div class="stat"><span class="num">{{ '%03d'|format(stats.users) }}</span><span class="lbl">Users</span></div>
-</section>
+<div class="role-banner role-{{ current_user.role }}">
+  <span class="role-label">CLEARANCE:</span>
+  <b>
+    {% if current_user.role == 'top_secret' %}TOP SECRET
+    {% elif current_user.role == 'analyst' %}ANALYST
+    {% else %}AGENT{% endif %}
+  </b>
+</div>
 
+{% if current_user.role == 'top_secret' %}
+<section class="card highlight">
+  <h2>◆ Top Secret Controls</h2>
+  <p class="dim">You create cases and assign them to Agents. Agents do the field work.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+    <a href="{{ url_for('cases') }}" class="primary" style="text-decoration:none;">◈ Create Case</a>
+    <a href="{{ url_for('users') }}" class="primary" style="text-decoration:none;">👥 Manage Users</a>
+    <a href="{{ url_for('activity') }}" class="primary" style="text-decoration:none;">📋 Activity Log</a>
+    <a href="{{ url_for('backups') }}" class="primary" style="text-decoration:none;">💾 Backups</a>
+  </div>
+  {% if agents %}
+    <p class="dim" style="margin-top:14px;">Available Agents:</p>
+    <ul class="list">
+      {% for a in agents %}
+      <li><b>{{ a.username }}</b>{% if a.codename %} <span class="dim">— {{ a.codename }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="dim" style="margin-top:14px;">No Agents yet. <a href="{{ url_for('users') }}">Create one →</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if current_user.role == 'agent' %}
 <section class="card quick-add">
   <h2>◆ Log New Intelligence</h2>
   <form method="POST" action="{{ url_for('quick_add') }}" enctype="multipart/form-data" id="quickForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <textarea name="body" id="bodyField" rows="4" placeholder="Add new Top News here..."></textarea>
-
+    <textarea name="body" id="bodyField" rows="4" placeholder="Type what you learned..."></textarea>
     <label>About</label>
     <select name="case_id" required>
       <option value="">— Select case —</option>
@@ -23,29 +47,32 @@
         <option value="{{ cid }}">{{ title }}</option>
       {% endfor %}
     </select>
-
     <label>When</label>
     <input type="datetime-local" name="happened_at" id="whenField" value="{{ now_local_str }}">
-
     <div class="attach-row">
-      <label class="attach">
-        📷 <span>Photo</span>
+      <label class="attach">📷 <span>Photo</span>
         <input type="file" name="photos" accept="image/*" multiple>
       </label>
-      <label class="attach">
-        🎙 <span>Voice</span>
+      <label class="attach">🎙 <span>Voice</span>
         <input type="file" name="voice" accept="audio/*">
       </label>
     </div>
-
     <div id="preview" class="preview"></div>
-
     <button class="primary big" type="submit">◆ Save Entry</button>
   </form>
 </section>
+{% endif %}
+
+{% if current_user.role == 'analyst' %}
+<section class="card highlight">
+  <h2>▣ Analyst Workspace</h2>
+  <p class="dim">You read every case and file analytic notes. You cannot modify field updates.</p>
+  <a href="{{ url_for('analyst_workspace') }}" class="primary" style="text-decoration:none;display:inline-block;margin-top:10px;">Open Analyst Workspace</a>
+</section>
+{% endif %}
 
 <section class="card">
-  <h2>◈ Active Cases</h2>
+  <h2>◈ Your Cases</h2>
   {% if cases %}
   <ul class="list">
     {% for c in cases %}
@@ -54,21 +81,26 @@
         <b>{{ c.title }}</b>
         {% if c.subject %}<span class="dim"> — {{ c.subject }}</span>{% endif %}
       </a>
-      <span class="badge">{{ c.updates|length }} entries</span>
-      {% if c.threat_level in ['HIGH','CRITICAL'] %}
-      <span class="badge warn">{{ c.threat_level }}</span>
+      {% if c.assigned_agent %}
+        <span class="badge ok">→ {{ c.assigned_agent.username }}</span>
+      {% else %}
+        <span class="badge warn">UNASSIGNED</span>
       {% endif %}
+      <span class="badge">{{ c.updates|length }} entries</span>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">No cases yet. <a href="{{ url_for('cases') }}">Open one →</a></p>
+  <p class="dim">
+    {% if current_user.role == 'agent' %}No cases assigned to you yet.
+    {% else %}No cases yet.{% endif %}
+  </p>
   {% endif %}
 </section>
 
 {% if recent %}
 <section class="card">
-  <h2>◷ Recent Activity Feed</h2>
+  <h2>◷ Recent Activity</h2>
   <ul class="updates">
     {% for u in recent %}
     <li>
@@ -89,33 +121,22 @@
         {% endfor %}
       </div>
       {% endif %}
-      <div class="upd-actions">
-        <a href="{{ url_for('update_edit', uid=u.id) }}">edit</a>
-        <form method="POST" action="{{ url_for('update_delete', uid=u.id) }}"
-              onsubmit="return confirm('Delete entry?');" style="display:inline">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="link-btn">delete</button>
-        </form>
-      </div>
     </li>
     {% endfor %}
   </ul>
 </section>
 {% endif %}
 
+{% if current_user.role == 'agent' %}
 <script>
 (function(){
-  // Prefill the "When" field with LOCAL time (device time), not server time.
-  // Runs only if the field is empty.
   var el = document.getElementById('whenField');
   if (el && !el.value) {
     var d = new Date();
     var pad = function(n){ return n<10 ? '0'+n : ''+n; };
-    el.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
-             + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    el.value = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())
+             +'T'+pad(d.getHours())+':'+pad(d.getMinutes());
   }
-
-  // Media preview
   var photosInput = document.querySelector('input[name="photos"]');
   var voiceInput  = document.querySelector('input[name="voice"]');
   var prev = document.getElementById('preview');
@@ -141,4 +162,5 @@
   if (voiceInput)  voiceInput.addEventListener('change', render);
 })();
 </script>
+{% endif %}
 {% endblock %}

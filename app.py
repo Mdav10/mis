@@ -1,8 +1,9 @@
 # ============================================================
-# MIS v13 — Top Secret / Agent / Analyst + manual 2FA + world map
+# MIS v14 — Strict role lockdown
+# Only assigned Agent writes on a case. Top Secret creates+assigns.
 # ============================================================
 
-import os, io, json, hmac, hashlib, secrets, base64, re
+import os, io, json, hmac, hashlib, secrets, base64
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -16,16 +17,16 @@ from flask_login import (
 )
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import FlaskForm
-from flask_wtf.file import FileField, FileRequired
+from flask_wtf.file import FileField
 from wtforms import (
     StringField, PasswordField, TextAreaField, SelectField,
-    BooleanField, SubmitField, DateTimeField, IntegerField
+    BooleanField, SubmitField, DateTimeField
 )
 from wtforms.validators import DataRequired, Length, EqualTo, Optional, Email
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
-from sqlalchemy import or_, and_, text, inspect
+from sqlalchemy import or_, text, inspect
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -38,17 +39,15 @@ from reportlab.lib import colors
 from pypdf import PdfReader, PdfWriter
 import pyotp
 
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-# ============================================================
-# CONFIG
-# ============================================================
 load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
+# ============================================================
+# CONFIG
+# ============================================================
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
     _db = os.getenv("DATABASE_URL",
@@ -80,7 +79,6 @@ def _inject_now():
     return {"now_local_str": datetime.now().strftime("%Y-%m-%dT%H:%M")}
 
 db = SQLAlchemy(app)
-
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Please log in."
@@ -109,9 +107,8 @@ def field_encrypt(plaintext):
         return ""
     try:
         nonce = secrets.token_bytes(12)
-        key = get_master_key()
-        ct = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"),
-                                  associated_data=b"MIS_FIELD")
+        ct = AESGCM(get_master_key()).encrypt(nonce, plaintext.encode("utf-8"),
+                                              associated_data=b"MIS_FIELD")
         return base64.b64encode(b"MIS1" + b"\x00" * 16 + nonce + ct).decode("ascii")
     except Exception:
         return plaintext
@@ -124,9 +121,8 @@ def field_decrypt(stored):
         blob = base64.b64decode(stored, validate=True)
         if blob[:4] != b"MIS1":
             return stored
-        nonce, ct = blob[20:32], blob[32:]
-        key = get_master_key()
-        return AESGCM(key).decrypt(nonce, ct, associated_data=b"MIS_FIELD").decode("utf-8")
+        return AESGCM(get_master_key()).decrypt(blob[20:32], blob[32:],
+                                                associated_data=b"MIS_FIELD").decode("utf-8")
     except Exception:
         return stored
 
@@ -144,7 +140,7 @@ def parse_local_dt(s):
 
 
 # ============================================================
-# ROLE CONSTANTS
+# ROLES
 # ============================================================
 ROLE_TOP = "top_secret"
 ROLE_AGENT = "agent"
@@ -167,8 +163,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     codename = db.Column(db.String(80), default="")
     email = db.Column(db.String(160), default="")
-    role = db.Column(db.String(20), default=ROLE_AGENT)  # top_secret/agent/analyst
-    clearance = db.Column(db.String(40), default="SECRET")
+    role = db.Column(db.String(20), default=ROLE_AGENT)
     totp_secret = db.Column(db.String(80), default="")
     totp_enabled = db.Column(db.Boolean, default=False)
     backup_codes = db.Column(db.Text, default="")
@@ -254,11 +249,10 @@ class Case(db.Model):
     subject = db.Column(db.String(200), default="")
     notes_enc = db.Column(db.Text, default="")
     status = db.Column(db.String(40), default="Active")
-    classification = db.Column(db.String(40), default="SECRET")
     threat_level = db.Column(db.String(20), default="MEDIUM")
     priority = db.Column(db.Integer, default=3)
     due_date = db.Column(db.DateTime, nullable=True)
-    assigned_agent_id = db.Column(db.Integer, nullable=True)  # Agent responsible
+    assigned_agent_id = db.Column(db.Integer, nullable=True)
     integrity_hash = db.Column(db.String(64), default="")
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -273,12 +267,9 @@ class Case(db.Model):
                                     order_by="AnalystNote.created_at.desc()")
 
     @property
-    def notes(self):
-        return field_decrypt(self.notes_enc or "")
-
+    def notes(self): return field_decrypt(self.notes_enc or "")
     @notes.setter
-    def notes(self, value):
-        self.notes_enc = field_encrypt(value or "")
+    def notes(self, v): self.notes_enc = field_encrypt(v or "")
 
     @property
     def assigned_agent(self):
@@ -299,12 +290,9 @@ class AnalystNote(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     @property
-    def body(self):
-        return field_decrypt(self.body_enc or "")
-
+    def body(self): return field_decrypt(self.body_enc or "")
     @body.setter
-    def body(self, value):
-        self.body_enc = field_encrypt(value or "")
+    def body(self, v): self.body_enc = field_encrypt(v or "")
 
 
 class Update(db.Model):
@@ -322,12 +310,9 @@ class Update(db.Model):
                              order_by="UpdateMedia.id")
 
     @property
-    def body(self):
-        return field_decrypt(self.body_enc or "")
-
+    def body(self): return field_decrypt(self.body_enc or "")
     @body.setter
-    def body(self, value):
-        self.body_enc = field_encrypt(value or "")
+    def body(self, v): self.body_enc = field_encrypt(v or "")
 
 
 class UpdateMedia(db.Model):
@@ -356,12 +341,9 @@ class Entity(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
-    def notes(self):
-        return field_decrypt(self.notes_enc or "")
-
+    def notes(self): return field_decrypt(self.notes_enc or "")
     @notes.setter
-    def notes(self, value):
-        self.notes_enc = field_encrypt(value or "")
+    def notes(self, v): self.notes_enc = field_encrypt(v or "")
 
 
 class CaseEntity(db.Model):
@@ -375,12 +357,9 @@ class CaseEntity(db.Model):
     entity = db.relationship("Entity")
 
     @property
-    def note(self):
-        return field_decrypt(self.note_enc or "")
-
+    def note(self): return field_decrypt(self.note_enc or "")
     @note.setter
-    def note(self, value):
-        self.note_enc = field_encrypt(value or "")
+    def note(self, v): self.note_enc = field_encrypt(v or "")
 
 
 class Relationship(db.Model):
@@ -397,12 +376,9 @@ class Relationship(db.Model):
     to_entity = db.relationship("Entity", foreign_keys=[to_id], backref="incoming")
 
     @property
-    def description(self):
-        return field_decrypt(self.description_enc or "")
-
+    def description(self): return field_decrypt(self.description_enc or "")
     @description.setter
-    def description(self, value):
-        self.description_enc = field_encrypt(value or "")
+    def description(self, v): self.description_enc = field_encrypt(v or "")
 
 
 class Source(db.Model):
@@ -414,12 +390,9 @@ class Source(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
-    def description(self):
-        return field_decrypt(self.description_enc or "")
-
+    def description(self): return field_decrypt(self.description_enc or "")
     @description.setter
-    def description(self, value):
-        self.description_enc = field_encrypt(value or "")
+    def description(self, v): self.description_enc = field_encrypt(v or "")
 
 
 class DeadDrop(db.Model):
@@ -432,16 +405,12 @@ class DeadDrop(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
-    def body(self):
-        return field_decrypt(self.body_enc or "")
-
+    def body(self): return field_decrypt(self.body_enc or "")
     @body.setter
-    def body(self, value):
-        self.body_enc = field_encrypt(value or "")
+    def body(self, v): self.body_enc = field_encrypt(v or "")
 
     @property
-    def is_unlocked(self):
-        return datetime.now() >= self.unlock_at
+    def is_unlocked(self): return datetime.now() >= self.unlock_at
 
     @property
     def countdown(self):
@@ -491,7 +460,6 @@ MIGRATIONS = {
         ("codename", "VARCHAR(80) DEFAULT ''"),
         ("email", "VARCHAR(160) DEFAULT ''"),
         ("role", "VARCHAR(20) DEFAULT 'agent'"),
-        ("clearance", "VARCHAR(40) DEFAULT 'SECRET'"),
         ("totp_secret", "VARCHAR(80) DEFAULT ''"),
         ("totp_enabled", "BOOLEAN DEFAULT FALSE"),
         ("backup_codes", "TEXT DEFAULT ''"),
@@ -504,7 +472,6 @@ MIGRATIONS = {
         ("subject", "VARCHAR(200) DEFAULT ''"),
         ("notes_enc", "TEXT DEFAULT ''"),
         ("threat_level", "VARCHAR(20) DEFAULT 'MEDIUM'"),
-        ("classification", "VARCHAR(40) DEFAULT 'SECRET'"),
         ("priority", "INTEGER DEFAULT 3"),
         ("due_date", "TIMESTAMP"),
         ("assigned_agent_id", "INTEGER"),
@@ -526,18 +493,6 @@ MIGRATIONS = {
     "mis_case_entities": [
         ("role", "VARCHAR(80) DEFAULT 'Other'"),
         ("note_enc", "TEXT DEFAULT ''"),
-    ],
-    "mis_relationships": [
-        ("description_enc", "TEXT DEFAULT ''"),
-        ("case_id", "INTEGER"),
-    ],
-    "mis_sources": [
-        ("description_enc", "TEXT DEFAULT ''"),
-        ("case_id", "INTEGER"),
-    ],
-    "mis_dead_drops": [
-        ("body_enc", "TEXT DEFAULT ''"),
-        ("created_by", "VARCHAR(80) DEFAULT 'system'"),
     ],
 }
 
@@ -563,8 +518,7 @@ def auto_migrate():
 def compute_integrity(obj, extra=""):
     parts = []
     for col in ("id", "created_at"):
-        v = getattr(obj, col, None)
-        parts.append(str(v) if v is not None else "")
+        parts.append(str(getattr(obj, col, "") or ""))
     for col in ("title", "subject", "status", "threat_level", "priority"):
         if hasattr(obj, col):
             parts.append(str(getattr(obj, col) or ""))
@@ -573,7 +527,7 @@ def compute_integrity(obj, extra=""):
 
 
 # ============================================================
-# ACCESS HELPERS
+# PERMISSIONS — LOCKED
 # ============================================================
 def can_view_case(user, case):
     """Top Secret: all. Agent: only assigned. Analyst: all."""
@@ -584,16 +538,28 @@ def can_view_case(user, case):
     return False
 
 
-def can_write_case(user, case):
-    """Top Secret: yes. Agent: only if assigned. Analyst: no (writes notes only)."""
-    if user.role == ROLE_TOP:
+def can_write_case_entries(user, case):
+    """STRICT: only the assigned Agent writes entries.
+    Top Secret cannot write entries. Analyst cannot write entries."""
+    if user.role == ROLE_AGENT and case.assigned_agent_id == user.id:
         return True
-    if user.role == ROLE_AGENT:
-        return case.assigned_agent_id == user.id
     return False
 
 
+def can_edit_case_meta(user, case):
+    """Top Secret edits name/subject/notes/threat/priority/assignment/due."""
+    return user.role == ROLE_TOP
+
+
 def can_delete_case(user, case):
+    return user.role == ROLE_TOP
+
+
+def can_write_analyst_note(user, case):
+    return user.role in (ROLE_TOP, ROLE_ANALYST)
+
+
+def can_manage_users(user):
     return user.role == ROLE_TOP
 
 
@@ -612,7 +578,7 @@ def require_role(*roles):
 
 
 # ============================================================
-# BULLETPROOF DELETES
+# DELETES
 # ============================================================
 def delete_case_and_children(cid):
     try:
@@ -869,9 +835,7 @@ def build_pdf(case, template="full"):
     story.append(Paragraph(esc(case.title), h2))
     if case.subject:
         story.append(Paragraph(f"Subject: {esc(case.subject)}", body))
-    agent_txt = ""
-    if case.assigned_agent:
-        agent_txt = f" · Agent: {case.assigned_agent.username}"
+    agent_txt = f" · Agent: {case.assigned_agent.username}" if case.assigned_agent else ""
     story.append(Paragraph(f"Status: {esc(case.status)} · Threat: {esc(case.threat_level)} · Priority: {case.priority}{agent_txt}", body))
     story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", meta))
     story.append(Spacer(1, 0.4 * cm))
@@ -951,13 +915,13 @@ def build_pdf(case, template="full"):
     if template in ("full", "evidence"):
         story.append(PageBreak())
         story.append(Paragraph("Evidence Register", h2))
-        all_media = []
+        rows = []
         for u in case.updates:
             for m in u.photos:
-                all_media.append((u.happened_at, u.id, m))
-        if all_media:
+                rows.append((u.happened_at, u.id, m))
+        if rows:
             data = [["When", "Entry", "Kind", "File", "SHA-256"]]
-            for when, uid, m in all_media:
+            for when, uid, m in rows:
                 data.append([when.strftime("%d %b %Y"), str(uid), m.kind,
                              (m.filename or "")[:32], (m.sha256 or "")[:24] + "…"])
             t = Table(data, colWidths=[2.5*cm, 1.5*cm, 1.8*cm, 6*cm, 5.5*cm])
@@ -970,23 +934,6 @@ def build_pdf(case, template="full"):
             story.append(t)
         else:
             story.append(Paragraph("— none —", body))
-
-    if template in ("full", "gaps"):
-        story.append(PageBreak())
-        story.append(Paragraph("Gap Analysis", h2))
-        story.append(Paragraph(f"Total entries: {len(case.updates)}", body))
-        story.append(Paragraph(f"Total people: {len(case.links)}", body))
-        if case.updates:
-            srt = sorted(case.updates, key=lambda u: u.happened_at)
-            gaps = []
-            for i in range(1, len(srt)):
-                delta = srt[i].happened_at - srt[i-1].happened_at
-                if delta.days >= 14:
-                    gaps.append((srt[i-1].happened_at, srt[i].happened_at, delta.days))
-            if gaps:
-                story.append(Paragraph("Periods with 14+ day gaps:", h3))
-                for a, b, d in gaps:
-                    story.append(Paragraph(f"· {a.strftime('%d %b %Y')} → {b.strftime('%d %b %Y')} ({d} days)", body))
 
     doc.build(story)
     return buf.getvalue()
@@ -1001,7 +948,7 @@ def encrypt_pdf_with_attachments(pdf_bytes, password, attachments):
         try:
             writer.add_attachment(filename=att["name"], data=att["data"])
         except Exception as e:
-            print(f"⚠️  Could not attach {att.get('name')}: {e}")
+            print(f"⚠️  Attach failed {att.get('name')}: {e}")
     writer.encrypt(user_password=password, owner_password=password,
                    permissions_flag=-1, algorithm="AES-256")
     out = io.BytesIO()
@@ -1010,7 +957,7 @@ def encrypt_pdf_with_attachments(pdf_bytes, password, attachments):
 
 
 # ============================================================
-# ROUTES — AUTH
+# AUTH ROUTES
 # ============================================================
 @app.route("/", methods=["GET", "POST"])
 def login():
@@ -1024,13 +971,11 @@ def login():
         if user and user.locked_until and user.locked_until > datetime.utcnow():
             flash(f"Account locked until {user.locked_until.strftime('%H:%M')}.", "error")
             return render_template("login.html", form=form)
-
         if user and user.check_password(form.password.data):
             user.failed_attempts = 0
             user.locked_until = None
             user.last_ip = ip
             db.session.commit()
-
             if user.totp_enabled:
                 session["pending_2fa_user"] = user.id
                 return redirect(url_for("two_factor"))
@@ -1054,10 +999,11 @@ def _complete_login(user):
     session["last_seen"] = datetime.utcnow().timestamp()
     session["sid"] = secrets.token_hex(16)
     rec = SessionRecord(user_id=user.id, session_id=session["sid"],
-                        ip=user.last_ip or "", user_agent=request.headers.get("User-Agent", "")[:300])
+                        ip=user.last_ip or "",
+                        user_agent=request.headers.get("User-Agent", "")[:300])
     db.session.add(rec)
     db.session.commit()
-    audit("login_success", f"{user.username} logged in as {user.role}", actor=user.username)
+    audit("login_success", f"{user.username} as {user.role}", actor=user.username)
     return redirect(url_for("dashboard"))
 
 
@@ -1071,8 +1017,7 @@ def two_factor():
         return redirect(url_for("login"))
     form = TwoFAForm()
     if form.validate_on_submit():
-        code = form.code.data.strip()
-        if user.verify_totp(code) or user.check_backup_code(code):
+        if user.verify_totp(form.code.data) or user.check_backup_code(form.code.data):
             session.pop("pending_2fa_user", None)
             return _complete_login(user)
         flash("Invalid code.", "error")
@@ -1137,22 +1082,14 @@ def change_password():
     return render_template("change_password.html", form=form)
 
 
-# ============================================================
-# 2FA — manual secret entry, no QR
-# ============================================================
 @app.route("/settings/2fa", methods=["GET", "POST"])
 @login_required
 def setup_2fa():
     if not current_user.totp_secret:
         current_user.totp_secret = pyotp.random_base32()
         db.session.commit()
-
-    # Build otpauth URI for tap-to-open (works on Android if an authenticator
-    # app is registered to handle otpauth:// deep links)
     otp_uri = pyotp.TOTP(current_user.totp_secret).provisioning_uri(
-        name=current_user.username, issuer_name="MIS"
-    )
-
+        name=current_user.username, issuer_name="MIS")
     form = Setup2FAForm()
     backup_codes = None
     if form.validate_on_submit():
@@ -1163,13 +1100,10 @@ def setup_2fa():
             audit("2fa_enabled", current_user.username, actor=current_user.username)
             flash("2FA enabled.", "success")
         else:
-            flash("Invalid code. Try again.", "error")
-
+            flash("Invalid code.", "error")
     return render_template("setup_2fa.html", form=form,
-                           secret=current_user.totp_secret,
-                           otp_uri=otp_uri,
-                           enabled=current_user.totp_enabled,
-                           backup_codes=backup_codes)
+                           secret=current_user.totp_secret, otp_uri=otp_uri,
+                           enabled=current_user.totp_enabled, backup_codes=backup_codes)
 
 
 @app.route("/settings/2fa/disable", methods=["POST"])
@@ -1178,7 +1112,6 @@ def disable_2fa():
     current_user.totp_enabled = False
     current_user.backup_codes = ""
     db.session.commit()
-    audit("2fa_disabled", current_user.username, actor=current_user.username)
     flash("2FA disabled.", "success")
     return redirect(url_for("setup_2fa"))
 
@@ -1197,7 +1130,6 @@ def my_sessions():
         db.session.commit()
         flash("Other sessions revoked.", "success")
         return redirect(url_for("my_sessions"))
-
     rows = db.session.execute(
         db.select(SessionRecord).where(SessionRecord.user_id == current_user.id,
                                        SessionRecord.revoked == False)
@@ -1220,9 +1152,17 @@ def dashboard():
             .order_by(Case.title)
         ).scalars().all()
 
-    recent = db.session.execute(
-        db.select(Update).order_by(Update.happened_at.desc()).limit(20)
-    ).scalars().all()
+    # Agent sees only their recent updates
+    if current_user.role == ROLE_AGENT:
+        recent = []
+        for c in cases:
+            recent.extend(c.updates)
+        recent.sort(key=lambda u: u.happened_at, reverse=True)
+        recent = recent[:20]
+    else:
+        recent = db.session.execute(
+            db.select(Update).order_by(Update.happened_at.desc()).limit(20)
+        ).scalars().all()
 
     stats = {
         "cases": len(cases),
@@ -1232,17 +1172,29 @@ def dashboard():
         "users": db.session.scalar(db.select(db.func.count(User.id))) or 0,
     }
 
+    # If user is Top Secret, show agents list so they can quickly see who exists
+    agents = []
+    if current_user.role == ROLE_TOP:
+        agents = db.session.execute(
+            db.select(User).where(User.role == ROLE_AGENT).order_by(User.username)
+        ).scalars().all()
+
     return render_template("dashboard.html", cases=cases, recent=recent,
                            case_choices=case_choices_for(current_user), stats=stats,
-                           now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"))
+                           now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+                           agents=agents)
 
 
 # ============================================================
-# QUICK ADD
+# QUICK ADD — STRICT: agent only, assigned case only
 # ============================================================
 @app.route("/add", methods=["POST"])
 @login_required
 def quick_add():
+    if current_user.role != ROLE_AGENT:
+        flash("Only the assigned Agent can log entries.", "error")
+        return redirect(url_for("dashboard"))
+
     form = QuickAddForm()
     form.case_id.choices = case_choices_for(current_user)
     if not form.case_id.data:
@@ -1250,8 +1202,8 @@ def quick_add():
         return redirect(request.referrer or url_for("dashboard"))
 
     case = db.session.get(Case, form.case_id.data)
-    if not case or not can_write_case(current_user, case):
-        flash("You don't have write access to that case.", "error")
+    if not case or not can_write_case_entries(current_user, case):
+        flash("You can only write on cases assigned to you.", "error")
         return redirect(url_for("dashboard"))
 
     body = (form.body.data or "").strip()
@@ -1270,7 +1222,6 @@ def quick_add():
     if not body and not files:
         flash("Type something or attach a file.", "error")
         return redirect(request.referrer or url_for("dashboard"))
-
     if not body and files:
         body = f"[{files[0][0].capitalize()} attached]"
 
@@ -1288,8 +1239,7 @@ def quick_add():
             update_id=u.id, kind=kind,
             filename=secure_filename(f.filename),
             mimetype=f.mimetype or "application/octet-stream",
-            data=raw, sha256=sha256_bytes(raw),
-        ))
+            data=raw, sha256=sha256_bytes(raw)))
 
     db.session.commit()
     audit("update_add", f"Case #{u.case_id}: {body[:40]}", actor=current_user.username)
@@ -1304,22 +1254,18 @@ def quick_add():
 @login_required
 def cases():
     if current_user.role != ROLE_TOP:
-        flash("Only Top Secret can create or manage cases.", "error")
+        flash("Only Top Secret can create cases.", "error")
         return redirect(url_for("dashboard"))
 
     form = CaseForm()
     form.assigned_agent_id.choices = agent_choices()
     if form.validate_on_submit():
         c = Case(
-            title=form.title.data,
-            subject=form.subject.data or "",
-            status=form.status.data,
-            priority=form.priority.data or 3,
-            threat_level=form.threat_level.data,
-            due_date=form.due_date.data,
+            title=form.title.data, subject=form.subject.data or "",
+            status=form.status.data, priority=form.priority.data or 3,
+            threat_level=form.threat_level.data, due_date=form.due_date.data,
             assigned_agent_id=form.assigned_agent_id.data or None,
-            created_by=current_user.username,
-        )
+            created_by=current_user.username)
         c.notes = form.notes.data or ""
         db.session.add(c)
         db.session.flush()
@@ -1342,10 +1288,9 @@ def case_detail(cid):
 
     form = CaseForm(obj=c)
     form.assigned_agent_id.choices = agent_choices()
-
     if form.validate_on_submit():
-        if current_user.role != ROLE_TOP:
-            flash("Only Top Secret can edit case details.", "error")
+        if not can_edit_case_meta(current_user, c):
+            flash("Only Top Secret can edit case meta.", "error")
             return redirect(url_for("case_detail", cid=c.id))
         c.title = form.title.data
         c.subject = form.subject.data or ""
@@ -1361,12 +1306,10 @@ def case_detail(cid):
         return redirect(url_for("case_detail", cid=c.id))
 
     analyst_form = AnalystNoteForm()
-    return render_template(
-        "case_detail.html", case=c, form=form,
-        case_choices=case_choices_for(current_user),
-        now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"),
-        analyst_form=analyst_form,
-    )
+    return render_template("case_detail.html", case=c, form=form,
+                           case_choices=case_choices_for(current_user),
+                           now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+                           analyst_form=analyst_form)
 
 
 @app.route("/cases/<int:cid>/delete", methods=["POST"])
@@ -1374,7 +1317,7 @@ def case_detail(cid):
 def case_delete(cid):
     c = db.session.get(Case, cid) or abort(404)
     if not can_delete_case(current_user, c):
-        flash("No permission.", "error")
+        flash("Only Top Secret can delete cases.", "error")
         return redirect(url_for("case_detail", cid=cid))
     ok, err = delete_case_and_children(cid)
     if not ok:
@@ -1395,7 +1338,6 @@ def case_report(cid):
     if not form.validate_on_submit():
         flash("Password required.", "error")
         return redirect(url_for("case_detail", cid=cid))
-
     pdf_bytes = build_pdf(c, template=form.template.data)
     attachments = []
     if form.template.data == "full":
@@ -1403,13 +1345,11 @@ def case_report(cid):
             for m in u.photos:
                 if m.kind == "voice" or (m.kind != "photo" and m.data):
                     attachments.append({"name": m.filename or f"memo_{m.id}.bin", "data": m.data})
-
     try:
         encrypted_pdf = encrypt_pdf_with_attachments(pdf_bytes, form.password.data, attachments)
     except Exception as e:
         flash(f"Encryption failed: {e}", "error")
         return redirect(url_for("case_detail", cid=cid))
-
     audit("report_download", f"Case #{cid} — {form.template.data}", actor=current_user.username)
     safe_title = "".join(ch for ch in c.title if ch.isalnum() or ch in "-_")[:40] or "case"
     fname = f"MIS_{safe_title}_{form.template.data}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
@@ -1427,14 +1367,12 @@ def case_report(cid):
 @login_required
 def analyst_add(cid):
     c = db.session.get(Case, cid) or abort(404)
-    if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
+    if not can_write_analyst_note(current_user, c):
         abort(403)
     form = AnalystNoteForm()
     if form.validate_on_submit():
-        n = AnalystNote(
-            case_id=c.id, category=form.category.data,
-            title=form.title.data, created_by=current_user.username,
-        )
+        n = AnalystNote(case_id=c.id, category=form.category.data,
+                        title=form.title.data, created_by=current_user.username)
         n.body = form.body.data
         db.session.add(n)
         db.session.commit()
@@ -1485,13 +1423,14 @@ def analyst_workspace():
 
 
 # ============================================================
-# UPDATE EDIT / DELETE
+# UPDATE EDIT / DELETE — STRICT
 # ============================================================
 @app.route("/updates/<int:uid>/edit", methods=["GET", "POST"])
 @login_required
 def update_edit(uid):
     u = db.session.get(Update, uid) or abort(404)
-    if not can_write_case(current_user, u.case):
+    # Only the assigned agent can edit. Top Secret cannot.
+    if not can_write_case_entries(current_user, u.case):
         abort(403)
     form = QuickAddForm(obj=u)
     form.case_id.choices = case_choices_for(current_user)
@@ -1515,8 +1454,7 @@ def update_edit(uid):
                                 update_id=u.id, kind=kind,
                                 filename=secure_filename(f.filename),
                                 mimetype=f.mimetype or "application/octet-stream",
-                                data=raw, sha256=sha256_bytes(raw),
-                            ))
+                                data=raw, sha256=sha256_bytes(raw)))
         u.integrity_hash = compute_integrity(u, extra=u.body_enc[:32])
         db.session.commit()
         flash("Entry updated.", "success")
@@ -1528,7 +1466,7 @@ def update_edit(uid):
 @login_required
 def update_delete(uid):
     u = db.session.get(Update, uid) or abort(404)
-    if not can_write_case(current_user, u.case):
+    if not can_write_case_entries(current_user, u.case):
         abort(403)
     cid = u.case_id
     ok, err = delete_update_and_children(uid)
@@ -1545,7 +1483,7 @@ def update_media_delete(uid, mid):
     m = db.session.get(UpdateMedia, mid) or abort(404)
     if m.update_id != uid:
         abort(404)
-    if not can_write_case(current_user, m.update.case):
+    if not can_write_case_entries(current_user, m.update.case):
         abort(403)
     cid = m.update.case_id
     db.session.delete(m)
@@ -1564,7 +1502,8 @@ def media_view(mid):
         mt = "image/jpeg"
     elif m.kind == "voice" and not mt.startswith("audio/"):
         mt = "audio/webm"
-    return send_file(io.BytesIO(m.data), mimetype=mt, as_attachment=False, download_name=m.filename)
+    return send_file(io.BytesIO(m.data), mimetype=mt,
+                     as_attachment=False, download_name=m.filename)
 
 
 # ============================================================
@@ -1614,7 +1553,7 @@ def entity_delete(eid):
 @login_required
 def case_entity_add(cid):
     c = db.session.get(Case, cid) or abort(404)
-    if not can_write_case(current_user, c):
+    if not can_write_case_entries(current_user, c):
         abort(403)
     name = (request.form.get("name") or "").strip()
     role = (request.form.get("role") or "Other").strip()
@@ -1636,7 +1575,7 @@ def case_entity_add(cid):
 @login_required
 def case_entity_edit(link_id):
     link = db.session.get(CaseEntity, link_id) or abort(404)
-    if not can_write_case(current_user, link.case):
+    if not can_write_case_entries(current_user, link.case):
         abort(403)
     link.role = (request.form.get("role") or link.role or "Other").strip()
     link.note = (request.form.get("note") or "").strip()
@@ -1649,7 +1588,7 @@ def case_entity_edit(link_id):
 @login_required
 def case_entity_delete(link_id):
     link = db.session.get(CaseEntity, link_id) or abort(404)
-    if not can_write_case(current_user, link.case):
+    if not can_write_case_entries(current_user, link.case):
         abort(403)
     cid = link.case_id
     db.session.delete(link)
@@ -1733,14 +1672,13 @@ def search():
         results["cases"] = db.session.execute(case_q).scalars().all()
 
         all_updates = db.session.execute(db.select(Update)).scalars().all()
-        visible = []
-        for u in all_updates:
-            if can_view_case(current_user, u.case) and q.lower() in (u.body or "").lower():
-                visible.append(u)
+        visible = [u for u in all_updates
+                   if can_view_case(current_user, u.case) and q.lower() in (u.body or "").lower()]
         results["updates"] = visible[:100]
 
         all_entities = db.session.execute(db.select(Entity)).scalars().all()
-        results["entities"] = [e for e in all_entities if q.lower() in (e.name or "").lower()][:100]
+        results["entities"] = [e for e in all_entities
+                               if q.lower() in (e.name or "").lower()][:100]
     return render_template("search.html", q=q, results=results)
 
 
@@ -1808,8 +1746,7 @@ def map_view():
             markers.append({
                 "id": p.id, "name": p.name, "type": p.type,
                 "threat": p.threat_level, "region": p.region,
-                "lat": p.latitude, "lng": p.longitude,
-                "verified": p.verified,
+                "lat": p.latitude, "lng": p.longitude, "verified": p.verified,
                 "color": {"LOW": "#3fb950", "MEDIUM": "#ffb000",
                           "HIGH": "#ff7b00", "CRITICAL": "#ff3b30"}.get(p.threat_level, "#8a8577"),
             })
@@ -1825,15 +1762,13 @@ def timeline_viz(cid):
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
-    events = []
-    for u in c.updates:
-        events.append({
-            "id": u.id, "when": u.happened_at.strftime("%Y-%m-%d %H:%M"),
-            "ts": u.happened_at.timestamp(), "body": (u.body or "")[:100],
-            "media": len(u.photos),
-            "photos": sum(1 for m in u.photos if m.kind == "photo"),
-            "voices": sum(1 for m in u.photos if m.kind == "voice"),
-        })
+    events = [{
+        "id": u.id, "when": u.happened_at.strftime("%Y-%m-%d %H:%M"),
+        "ts": u.happened_at.timestamp(), "body": (u.body or "")[:100],
+        "media": len(u.photos),
+        "photos": sum(1 for m in u.photos if m.kind == "photo"),
+        "voices": sum(1 for m in u.photos if m.kind == "voice"),
+    } for u in c.updates]
     return render_template("timeline_viz.html", case=c, events=events)
 
 
@@ -1856,33 +1791,24 @@ def backup_create():
     if len(password) < 8:
         flash("Backup password must be at least 8 characters.", "error")
         return redirect(url_for("backups"))
-
     data = {"created_at": datetime.utcnow().isoformat(), "cases": []}
     for c in db.session.execute(db.select(Case)).scalars().all():
-        case_data = {
-            "id": c.id, "title": c.title, "subject": c.subject,
-            "notes": c.notes, "status": c.status, "priority": c.priority,
-            "threat_level": c.threat_level, "updates": []
-        }
+        cd = {"id": c.id, "title": c.title, "subject": c.subject, "notes": c.notes,
+              "status": c.status, "priority": c.priority, "threat_level": c.threat_level, "updates": []}
         for u in c.updates:
-            case_data["updates"].append({
-                "when": u.happened_at.isoformat(), "body": u.body,
-                "media_count": len(u.photos),
-            })
-        data["cases"].append(case_data)
-
+            cd["updates"].append({"when": u.happened_at.isoformat(), "body": u.body,
+                                  "media_count": len(u.photos)})
+        data["cases"].append(cd)
     raw = json.dumps(data, indent=2).encode("utf-8")
     nonce = secrets.token_bytes(12)
     key = hashlib.sha256(password.encode()).digest()
     ct = AESGCM(key).encrypt(nonce, raw, associated_data=b"MIS_BACKUP")
     blob = b"MISB1" + b"\x00" * 16 + nonce + ct
-
     fname = f"MIS_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.misbak"
     db.session.add(Backup(filename=fname, size_bytes=len(blob),
                           record_count=len(data["cases"]), created_by=current_user.username))
     db.session.commit()
     audit("backup_create", fname, actor=current_user.username)
-
     resp = send_file(io.BytesIO(blob), mimetype="application/octet-stream",
                      as_attachment=True, download_name=fname)
     resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
@@ -1908,7 +1834,7 @@ def integrity():
 
 
 # ============================================================
-# USERS (Top Secret only)
+# USERS — Top Secret only
 # ============================================================
 @app.route("/users", methods=["GET", "POST"])
 @login_required
@@ -1994,8 +1920,8 @@ def bootstrap():
             db.session.commit()
             print(f"✅ Seeded: {u} as Top Secret")
         else:
-            # Migrate old role labels to new ones
-            if existing.role in ("admin", "manager", "SECRET", None, ""):
+            # Migrate any old role labels
+            if existing.role in ("admin", "manager", None, ""):
                 existing.role = ROLE_TOP
                 db.session.commit()
             elif existing.role in ("contributor", "viewer"):
