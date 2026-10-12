@@ -44,16 +44,44 @@ load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
+
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
-    _db = os.getenv("DATABASE_URL",
-                    f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
+
+    _db = os.getenv(
+        "DATABASE_URL",
+        f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}"
+    )
+
     if _db.startswith("postgres://"):
         _db = _db.replace("postgres://", "postgresql://", 1)
+
+    if _db.startswith("postgresql://"):
+        _db = _db.replace(
+            "postgresql://",
+            "postgresql+psycopg2://",
+            1
+        )
+
+    SQLALCHEMY_DATABASE_URI = _db
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        "pool_recycle": 300
+    }
+    WTF_CSRF_TIME_LIMIT = None
+
+
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
     WTF_CSRF_TIME_LIMIT = None
+
+
+
+
     MAX_CONTENT_LENGTH = 80 * 1024 * 1024
     INITIAL_USERNAME = os.getenv("INITIAL_USERNAME", "Mpc")
     INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "08800Mpc!")
