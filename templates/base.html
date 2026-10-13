@@ -7,11 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MIS">
-<link rel="manifest" href="/manifest.json?v=19">
+<link rel="manifest" href="/manifest.json?v=20">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <title>{% block title %}MIS{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=19">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20">
 {% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
@@ -19,6 +19,9 @@
 {% if current_user.is_authenticated %}
 {% set active = request.endpoint %}
 {% set is_duress = duress_mode or false %}
+{% set is_top = current_user.role == 'top_secret' %}
+{% set is_analyst = current_user.role == 'analyst' %}
+{% set is_agent = current_user.role == 'agent' %}
 
 <div class="classified-banner">◆ CLASSIFIED // MIS OPERATIONAL // EYES ONLY ◆</div>
 <header class="topbar">
@@ -34,11 +37,11 @@
     <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}">People</a>
     <a href="{{ url_for('graph') }}" class="{{ 'active' if active=='graph' }}">Graph</a>
     <a href="{{ url_for('deep_search') }}" class="{{ 'active' if active=='deep_search' }}">Deep</a>
-    {% if current_user.role in ['top_secret','analyst'] %}
+    {% if is_top or is_analyst %}
     <a href="{{ url_for('patterns') }}" class="{{ 'active' if active=='patterns' }}">Patterns</a>
     <a href="{{ url_for('geo') }}" class="{{ 'active' if active=='geo' }}">Geo</a>
     {% endif %}
-    {% if current_user.role == 'top_secret' %}
+    {% if is_top %}
     <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">Users</a>
     {% endif %}
   </nav>
@@ -57,15 +60,18 @@
         <a href="{{ url_for('setup_2fa') }}" class="menu-link">🔐 {{ '2FA Enabled' if current_user.totp_enabled else 'Enable 2FA' }}</a>
         <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
         <a href="{{ url_for('setup_duress') }}" class="menu-link">🛡 Duress Mode</a>
+        <a href="{{ url_for('setup_deadman') }}" class="menu-link">☠ Dead Man's Switch</a>
         <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
         <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity</a>
-        {% if current_user.role in ['top_secret','analyst'] %}
+        <a href="{{ url_for('exports') }}" class="menu-link">📤 Exports</a>
+        {% if is_top or is_analyst %}
         <a href="{{ url_for('patterns') }}" class="menu-link">◇ Patterns</a>
         <a href="{{ url_for('geo') }}" class="menu-link">◌ Geo Analysis</a>
         <a href="{{ url_for('custody_overview') }}" class="menu-link">⛓ Custody Log</a>
         {% endif %}
-        {% if current_user.role == 'top_secret' %}
+        {% if is_top %}
         <a href="{{ url_for('users') }}" class="menu-link">👥 Users</a>
+        <a href="{{ url_for('api_keys') }}" class="menu-link">🔑 API Keys</a>
         <a href="{{ url_for('backups') }}" class="menu-link">💾 Backups</a>
         {% endif %}
       {% else %}
@@ -74,11 +80,6 @@
         <a href="{{ url_for('duress_home') }}" class="menu-link">ℹ About</a>
       {% endif %}
 
-      <a href="{{ url_for('setup_deadman') }}" class="menu-link">☠ Dead Man's Switch</a>
-        <a href="{{ url_for('exports') }}" class="menu-link">📤 Exports</a>
-        {% if current_user.role == 'top_secret' %}
-        <a href="{{ url_for('api_keys') }}" class="menu-link">🔑 API Keys</a>
-        {% endif %}
       <a href="{{ url_for('logout') }}" class="logout-link menu-link">⏻ Log Out</a>
     </div>
   </div>
@@ -96,12 +97,14 @@
 
 {% if current_user.is_authenticated %}
 {% set is_duress = duress_mode or false %}
+{% set is_top = current_user.role == 'top_secret' %}
+{% set is_analyst = current_user.role == 'analyst' %}
 <nav class="mobilenav">
   {% if not is_duress %}
     <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}"><span class="ico">◉</span>Home</a>
     <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}"><span class="ico">◈</span>Cases</a>
     <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}"><span class="ico">◍</span>People</a>
-    {% if current_user.role in ['top_secret','analyst'] %}
+    {% if is_top or is_analyst %}
     <a href="{{ url_for('patterns') }}" class="{{ 'active' if active=='patterns' }}"><span class="ico">◇</span>Patterns</a>
     <a href="{{ url_for('geo') }}" class="{{ 'active' if active=='geo' }}"><span class="ico">◌</span>Geo</a>
     {% else %}
@@ -204,7 +207,7 @@
     navigator.serviceWorker.getRegistrations().then(function (regs) {
       regs.forEach(function (r) { r.unregister(); });
     });
-    navigator.serviceWorker.register('/service-worker.js?v=19').catch(function () {});
+    navigator.serviceWorker.register('/service-worker.js?v=20').catch(function () {});
   }
 })();
 </script>
