@@ -27,7 +27,6 @@
     <span class="agent-name">{{ current_user.codename or current_user.username|upper }}</span>
   </div>
 
-  {# ------ Real nav: hidden in duress mode ------ #}
   {% if not is_duress %}
   <nav class="desktop-nav">
     <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">Home</a>
@@ -55,13 +54,14 @@
       </div>
 
       {% if not is_duress %}
-        {# ------ Real menu items: hidden in duress mode ------ #}
         <a href="{{ url_for('setup_2fa') }}" class="menu-link">🔐 {{ '2FA Enabled' if current_user.totp_enabled else 'Enable 2FA' }}</a>
         <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
         <a href="{{ url_for('setup_duress') }}" class="menu-link">🛡 Duress Mode</a>
         <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
         <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity</a>
         {% if current_user.role in ['top_secret','analyst'] %}
+        <a href="{{ url_for('patterns') }}" class="menu-link">◇ Patterns</a>
+        <a href="{{ url_for('geo') }}" class="menu-link">◌ Geo Analysis</a>
         <a href="{{ url_for('custody_overview') }}" class="menu-link">⛓ Custody Log</a>
         {% endif %}
         {% if current_user.role == 'top_secret' %}
@@ -69,7 +69,6 @@
         <a href="{{ url_for('backups') }}" class="menu-link">💾 Backups</a>
         {% endif %}
       {% else %}
-        {# ------ Decoy menu items shown when under duress ------ #}
         <a href="{{ url_for('duress_home') }}" class="menu-link">🏠 My Lists</a>
         <a href="{{ url_for('duress_home') }}" class="menu-link">⚙ Preferences</a>
         <a href="{{ url_for('duress_home') }}" class="menu-link">ℹ About</a>
@@ -97,8 +96,13 @@
     <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}"><span class="ico">◉</span>Home</a>
     <a href="{{ url_for('cases') }}" class="{{ 'active' if active in ['cases','case_detail'] }}"><span class="ico">◈</span>Cases</a>
     <a href="{{ url_for('entities') }}" class="{{ 'active' if active in ['entities','entity_detail'] }}"><span class="ico">◍</span>People</a>
+    {% if current_user.role in ['top_secret','analyst'] %}
+    <a href="{{ url_for('patterns') }}" class="{{ 'active' if active=='patterns' }}"><span class="ico">◇</span>Patterns</a>
+    <a href="{{ url_for('geo') }}" class="{{ 'active' if active=='geo' }}"><span class="ico">◌</span>Geo</a>
+    {% else %}
     <a href="{{ url_for('graph') }}" class="{{ 'active' if active=='graph' }}"><span class="ico">◇</span>Graph</a>
     <a href="{{ url_for('deep_search') }}" class="{{ 'active' if active=='deep_search' }}"><span class="ico">▣</span>Deep</a>
+    {% endif %}
   {% else %}
     <a href="{{ url_for('duress_home') }}" class="active"><span class="ico">◉</span>Home</a>
     <a href="{{ url_for('duress_home') }}"><span class="ico">📝</span>Lists</a>
