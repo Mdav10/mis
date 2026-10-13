@@ -3533,24 +3533,88 @@ def api_key_revoke(kid):
 # ============================================================
 @app.route("/manifest.json")
 def manifest():
-    resp = send_file(os.path.join(BASE_DIR, "static", "manifest.json"),
-                     mimetype="application/manifest+json")
-    resp.headers["Cache-Control"] = "no-cache"
+    """Serve manifest with the MIME type Chrome requires."""
+    path = os.path.join(BASE_DIR, "static", "manifest.json")
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    resp = app.response_class(content, mimetype="application/manifest+json", status=200)
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 
 
 @app.route("/service-worker.js")
 def service_worker():
-    resp = send_file(os.path.join(BASE_DIR, "static", "service-worker.js"),
-                     mimetype="application/javascript")
+    """Serve service worker from root with correct MIME + scope."""
+    path = os.path.join(BASE_DIR, "static", "service-worker.js")
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    resp = app.response_class(content, mimetype="application/javascript", status=200)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Service-Worker-Allowed"] = "/"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 
 
 @app.route("/offline")
 def offline():
     return render_template("offline.html")
+
+
+@app.route("/icon-<int:size>.png")
+def icon_direct(size):
+    """Serve PWA icons from root so manifest can use /icon-NNN.png URLs."""
+    valid = {16, 32, 48, 64, 96, 128, 144, 152, 180, 192, 384, 512}
+    if size not in valid:
+        abort(404)
+    path = os.path.join(BASE_DIR, "static", "icons", f"icon-{size}.png")
+    if not os.path.isfile(path):
+        abort(404)
+    resp = send_file(path, mimetype="image/png")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@app.route("/pwa-check")
+def pwa_check():
+    """Diagnostic — shows exactly what Chrome sees."""
+    import json as _json
+    mf_path = os.path.join(BASE_DIR, "static", "manifest.json")
+    sw_path = os.path.join(BASE_DIR, "static", "service-worker.js")
+    icon_dir = os.path.join(BASE_DIR, "static", "icons")
+
+    out = {
+        "manifest_exists": os.path.isfile(mf_path),
+        "manifest_url": "/manifest.json",
+        "manifest_ok": False,
+        "manifest_icons_found": [],
+        "manifest_icons_missing": [],
+        "sw_exists": os.path.isfile(sw_path),
+        "sw_url": "/service-worker.js",
+        "icons_in_folder": [],
+        "https": (request.is_secure or
+                  request.headers.get("X-Forwarded-Proto", "") == "https"),
+    }
+
+    if out["manifest_exists"]:
+        try:
+            with open(mf_path) as f:
+                mf = _json.load(f)
+            out["manifest_ok"] = all(k in mf for k in ("name", "start_url", "display", "icons"))
+            for ic in mf.get("icons", []):
+                src_icon = ic.get("src", "").lstrip("/")
+                full = os.path.join(BASE_DIR, src_icon)
+                if os.path.isfile(full):
+                    out["manifest_icons_found"].append(ic.get("src"))
+                else:
+                    out["manifest_icons_missing"].append(ic.get("src"))
+        except Exception as e:
+            out["manifest_error"] = str(e)
+
+    if os.path.isdir(icon_dir):
+        out["icons_in_folder"] = sorted(os.listdir(icon_dir))
+
+    return _json.dumps(out, indent=2), 200, {"Content-Type": "application/json"}
 
 
 # ============================================================
