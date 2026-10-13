@@ -1885,6 +1885,147 @@ def duress_home():
 # ============================================================
 # DASHBOARD
 # ============================================================
+# ============================================================
+# SETTINGS — password / 2FA / Duress / Sessions / Integrity / Activity
+# ============================================================
+@app.route("/settings/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    form = ChangePasswordForm()
+    if form.validate_on_submit():
+        if not current_user.check_password(form.current.data):
+            flash("Current password is incorrect.", "error")
+        else:
+            current_user.set_password(form.new.data)
+            db.session.commit()
+            audit("password_change", current_user.username, actor=current_user.username)
+            flash("Password updated.", "success")
+            return redirect(url_for("dashboard"))
+    return render_template("change_password.html", form=form)
+
+
+@app.route("/settings/2fa", methods=["GET", "POST"])
+@login_required
+def setup_2fa():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    if not current_user.totp_secret:
+        current_user.totp_secret = pyotp.random_base32()
+        db.session.commit()
+    otp_uri = pyotp.TOTP(current_user.totp_secret).provisioning_uri(
+        name=current_user.username, issuer_name="MIS")
+    form = Setup2FAForm()
+    backup_codes = None
+    if form.validate_on_submit():
+        if pyotp.TOTP(current_user.totp_secret).verify(form.code.data.strip(), valid_window=1):
+            current_user.totp_enabled = True
+            backup_codes = current_user.generate_backup_codes()
+            db.session.commit()
+            audit("2fa_enabled", current_user.username, actor=current_user.username)
+            flash("2FA enabled.", "success")
+        else:
+            flash("Invalid code.", "error")
+    return render_template("setup_2fa.html", form=form,
+                           secret=current_user.totp_secret, otp_uri=otp_uri,
+                           enabled=current_user.totp_enabled, backup_codes=backup_codes)
+
+
+@app.route("/settings/2fa/disable", methods=["POST"])
+@login_required
+def disable_2fa():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    current_user.totp_enabled = False
+    current_user.backup_codes = ""
+    db.session.commit()
+    flash("2FA disabled.", "success")
+    return redirect(url_for("setup_2fa"))
+
+
+@app.route("/settings/duress", methods=["GET", "POST"])
+@login_required
+def setup_duress():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    form = DuressForm()
+    if form.validate_on_submit():
+        if not current_user.check_password(form.current_password.data):
+            flash("Current password is incorrect.", "error")
+        else:
+            dp = (form.duress_password.data or "").strip()
+            if dp and len(dp) < 6:
+                flash("Duress password must be at least 6 characters.", "error")
+            else:
+                current_user.set_duress(dp)
+                current_user.duress_contact = (form.duress_contact.data or "").strip()
+                db.session.commit()
+                audit("duress_updated",
+                      f"duress {'set' if dp else 'cleared'}",
+                      actor=current_user.username)
+                flash("Duress settings updated.", "success")
+                return redirect(url_for("dashboard"))
+    else:
+        form.duress_contact.data = current_user.duress_contact or ""
+    return render_template("setup_duress.html", form=form,
+                           has_duress=bool(current_user.duress_hash),
+                           contact=current_user.duress_contact)
+
+
+@app.route("/settings/sessions", methods=["GET", "POST"])
+@login_required
+def my_sessions():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    if request.method == "POST":
+        sid = session.get("sid")
+        rows = db.session.execute(
+            db.select(SessionRecord).where(SessionRecord.user_id == current_user.id)
+        ).scalars().all()
+        for r in rows:
+            if r.session_id != sid:
+                r.revoked = True
+        db.session.commit()
+        flash("Other sessions revoked.", "success")
+        return redirect(url_for("my_sessions"))
+    rows = db.session.execute(
+        db.select(SessionRecord).where(SessionRecord.user_id == current_user.id,
+                                       SessionRecord.revoked == False)
+        .order_by(SessionRecord.last_seen.desc())
+    ).scalars().all()
+    return render_template("sessions.html", sessions=rows, current_sid=session.get("sid"))
+
+
+@app.route("/integrity")
+@login_required
+def integrity():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    issues = []
+    for c in db.session.execute(db.select(Case)).scalars().all():
+        expected = compute_integrity(c)
+        if c.integrity_hash and c.integrity_hash != expected:
+            issues.append(("case", c.id, c.title))
+    for u in db.session.execute(db.select(Update)).scalars().all():
+        expected = compute_integrity(u, extra=(u.body_enc or "")[:32])
+        if u.integrity_hash and u.integrity_hash != expected:
+            issues.append(("update", u.id, (u.body or "")[:40]))
+    return render_template("integrity.html", issues=issues)
+
+
+@app.route("/activity")
+@login_required
+@require_role(ROLE_TOP)
+def activity():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    rows = db.session.execute(
+        db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(300)
+    ).scalars().all()
+    return render_template("audit.html", entries=rows)
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -3076,15 +3217,6 @@ def search():
                                if q.lower() in (e.name or "").lower()][:100]
     return render_template("search.html", q=q, results=results)
 
-
-@app.route("/activity")
-@login_required
-@require_role(ROLE_TOP)
-def activity():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    rows = db.session.execute(db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(300)).scalars().all()
-    return render_template("audit.html", entries=rows)
 
 
 # ============================================================
