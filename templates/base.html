@@ -5,11 +5,6 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0a08">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="MIS">
-<link rel="manifest" href="/manifest.json?v=20">
-<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
-<link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <title>{% block title %}MIS{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20">
 {% block head %}{% endblock %}
@@ -21,11 +16,11 @@
 {% set is_duress = duress_mode or false %}
 {% set is_top = current_user.role == 'top_secret' %}
 {% set is_analyst = current_user.role == 'analyst' %}
-{% set is_agent = current_user.role == 'agent' %}
 
 <div class="classified-banner">◆ CLASSIFIED // MIS OPERATIONAL // EYES ONLY ◆</div>
 <header class="topbar">
-  <div class="brand"><a href="{{ url_for('dashboard') }}">MIS</a>
+  <div class="brand">
+    <a href="{{ url_for('dashboard') }}">MIS</a>
     <span class="dim">◈</span>
     <span class="agent-name">{{ current_user.codename or current_user.username|upper }}</span>
   </div>
@@ -57,16 +52,14 @@
       </div>
 
       {% if not is_duress %}
-        <a href="{{ url_for('setup_2fa') }}" class="menu-link">🔐 {{ '2FA Enabled' if current_user.totp_enabled else 'Enable 2FA' }}</a>
         <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
-        <a href="{{ url_for('setup_duress') }}" class="menu-link">🛡 Duress Mode</a>
-        <a href="{{ url_for('setup_deadman') }}" class="menu-link">☠ Dead Man's Switch</a>
         <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
         <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity</a>
+        <a href="{{ url_for('setup_deadman') }}" class="menu-link">☠ Dead Man's Switch</a>
         <a href="{{ url_for('exports') }}" class="menu-link">📤 Exports</a>
         {% if is_top or is_analyst %}
         <a href="{{ url_for('patterns') }}" class="menu-link">◇ Patterns</a>
-        <a href="{{ url_for('geo') }}" class="menu-link">◌ Geo Analysis</a>
+        <a href="{{ url_for('geo') }}" class="menu-link">◌ Geo</a>
         <a href="{{ url_for('custody_overview') }}" class="menu-link">⛓ Custody Log</a>
         {% endif %}
         {% if is_top %}
@@ -136,73 +129,6 @@
       }
     });
   }
-
-  function spin(el) {
-    if (!el || el.dataset.spinning === '1') return;
-    el.dataset.spinning = '1';
-    el.dataset.originalHtml = el.innerHTML;
-    if (el.tagName === 'BUTTON' || el.classList.contains('primary')) {
-      el.disabled = true;
-      el.classList.add('is-spinning');
-      el.innerHTML = '<span class="btn-spinner"></span>';
-    } else if (el.tagName === 'A') {
-      el.classList.add('is-spinning-link');
-      el.innerHTML = '<span class="btn-spinner"></span>';
-    }
-  }
-
-  document.addEventListener('submit', function (e) {
-    var form = e.target;
-    if (!form.checkValidity()) return;
-    var btn = form.querySelector('button[type="submit"]') ||
-              form.querySelector('button:not([type])') ||
-              form.querySelector('input[type="submit"]');
-    if (btn && btn.tagName === 'BUTTON') spin(btn);
-  }, true);
-
-  document.addEventListener('click', function (e) {
-    var btn = e.target.closest('button');
-    if (!btn) return;
-    if (btn.id === 'menuBtn') return;
-    if (btn.closest('form')) return;
-    if (btn.dataset.noSpin === '1') return;
-    if (btn.type === 'button') {
-      var orig = btn.innerHTML;
-      btn.classList.add('is-spinning');
-      btn.disabled = true;
-      btn.innerHTML = '<span class="btn-spinner"></span>';
-      setTimeout(function () {
-        btn.classList.remove('is-spinning');
-        btn.disabled = false;
-        btn.innerHTML = orig;
-      }, 600);
-    }
-  });
-
-  document.addEventListener('click', function (e) {
-    var a = e.target.closest('a');
-    if (!a) return;
-    var href = a.getAttribute('href') || '';
-    if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
-    if (a.target === '_blank' || a.hasAttribute('download')) return;
-    if (a.classList.contains('link-btn') || a.classList.contains('case-tag')) return;
-    if (a.classList.contains('menu-link')) {
-      a.classList.add('is-spinning-link');
-      a.innerHTML = '<span class="btn-spinner"></span>';
-      return;
-    }
-    spin(a);
-  });
-
-  window.addEventListener('pageshow', function () {
-    document.querySelectorAll('.is-spinning, .is-spinning-link').forEach(function (el) {
-      el.classList.remove('is-spinning', 'is-spinning-link');
-      if (el.tagName === 'BUTTON') el.disabled = false;
-      if (el.dataset.originalHtml) el.innerHTML = el.dataset.originalHtml;
-      delete el.dataset.spinning;
-    });
-  });
-
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations().then(function (regs) {
       regs.forEach(function (r) { r.unregister(); });
