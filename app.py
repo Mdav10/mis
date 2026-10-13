@@ -1,6 +1,6 @@
 # ============================================================
-# MIS v18 — Wave 3: Pattern Detection + Geospatial + Duress Mode
-# Base: v17 (Wave 2 working)
+# MIS v19 — Wave 3 fix: Duress Mode is now a fully locked sandbox
+# Base: v18
 # ============================================================
 
 import os, io, json, hmac, hashlib, secrets, base64, re, subprocess, tempfile, threading
@@ -82,6 +82,11 @@ def _inject_csrf():
 @app.context_processor
 def _inject_now():
     return {"now_local_str": datetime.now().strftime("%Y-%m-%dT%H:%M")}
+
+@app.context_processor
+def _inject_duress():
+    """Every template can check `duress_mode` — menu items render accordingly."""
+    return {"duress_mode": bool(session.get("duress"))}
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -355,9 +360,8 @@ class User(UserMixin, db.Model):
     last_ip = db.Column(db.String(64), default="")
     failed_attempts = db.Column(db.Integer, default=0)
     locked_until = db.Column(db.DateTime, nullable=True)
-    # ---- Wave 3: Duress ----
-    duress_hash = db.Column(db.String(255), default="")   # second password
-    duress_contact = db.Column(db.String(200), default="")  # email to notify
+    duress_hash = db.Column(db.String(255), default="")
+    duress_contact = db.Column(db.String(200), default="")
     duress_triggered_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -806,6 +810,38 @@ def compute_integrity(obj, extra=""):
             parts.append(str(getattr(obj, col) or ""))
     parts.append(extra)
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+# ============================================================
+# DURESS SANDBOX ENFORCER
+# ============================================================
+# When a session is in duress mode, EVERY route except this allow-list
+# gets redirected to /duress — the harmless decoy home.
+DURESS_ALLOWED_ENDPOINTS = {
+    "login", "logout", "static", "duress_home",
+    "manifest", "service_worker",
+}
+
+
+@app.before_request
+def _enforce_duress_sandbox():
+    """If this is a duress session, block every real action."""
+    # Not a duress session? Nothing to do.
+    if not session.get("duress"):
+        return
+    endpoint = request.endpoint or ""
+    if endpoint in DURESS_ALLOWED_ENDPOINTS:
+        return
+    # Any request that would touch real data → send to decoy
+    # POST attempts get silently "succeeded" and bounce back to decoy
+    if request.method == "POST":
+        # Fake success message so nothing looks suspicious
+        flash("Saved.", "success")
+    return redirect(url_for("duress_home"))
+
+
+def is_duress_session():
+    return bool(session.get("duress"))
 
 
 # ============================================================
@@ -1342,7 +1378,7 @@ def make_encrypted_backup(password):
 
 
 # ============================================================
-# ROUTES — AUTH (with duress detection)
+# ROUTES — AUTH
 # ============================================================
 @app.route("/", methods=["GET", "POST"])
 def login():
@@ -1359,7 +1395,6 @@ def login():
             flash(f"Account locked until {user.locked_until.strftime('%H:%M')}.", "error")
             return render_template("login.html", form=form)
 
-        # --- Check real password first ---
         is_real = user and user.check_password(pwd)
         is_duress = (not is_real) and user and user.duress_hash and user.check_duress(pwd)
 
@@ -1375,7 +1410,6 @@ def login():
             return _complete_login(user, is_duress=False)
 
         if is_duress:
-            # Duress mode — log it, open decoy
             user.last_ip = ip
             user.duress_triggered_at = datetime.utcnow()
             db.session.commit()
@@ -1409,11 +1443,9 @@ def _complete_login(user, is_duress=False):
     audit("login_success",
           f"{user.username} as {user.role}{' [DURESS]' if is_duress else ''}",
           actor=user.username)
+    if is_duress:
+        return redirect(url_for("duress_home"))
     return redirect(url_for("dashboard"))
-
-
-def is_duress_session():
-    return bool(session.get("duress"))
 
 
 @app.route("/two-factor", methods=["GET", "POST"])
@@ -1477,121 +1509,35 @@ def _enforce_timeouts():
             db.session.commit()
 
 
-@app.route("/settings/password", methods=["GET", "POST"])
-@login_required
-def change_password():
-    form = ChangePasswordForm()
-    if form.validate_on_submit():
-        if not current_user.check_password(form.current.data):
-            flash("Current password is incorrect.", "error")
-        else:
-            current_user.set_password(form.new.data)
-            db.session.commit()
-            audit("password_change", current_user.username, actor=current_user.username)
-            flash("Password updated.", "success")
-            return redirect(url_for("dashboard"))
-    return render_template("change_password.html", form=form)
-
-
-@app.route("/settings/2fa", methods=["GET", "POST"])
-@login_required
-def setup_2fa():
-    if not current_user.totp_secret:
-        current_user.totp_secret = pyotp.random_base32()
-        db.session.commit()
-    otp_uri = pyotp.TOTP(current_user.totp_secret).provisioning_uri(
-        name=current_user.username, issuer_name="MIS")
-    form = Setup2FAForm()
-    backup_codes = None
-    if form.validate_on_submit():
-        if pyotp.TOTP(current_user.totp_secret).verify(form.code.data.strip(), valid_window=1):
-            current_user.totp_enabled = True
-            backup_codes = current_user.generate_backup_codes()
-            db.session.commit()
-            audit("2fa_enabled", current_user.username, actor=current_user.username)
-            flash("2FA enabled.", "success")
-        else:
-            flash("Invalid code.", "error")
-    return render_template("setup_2fa.html", form=form,
-                           secret=current_user.totp_secret, otp_uri=otp_uri,
-                           enabled=current_user.totp_enabled, backup_codes=backup_codes)
-
-
-@app.route("/settings/2fa/disable", methods=["POST"])
-@login_required
-def disable_2fa():
-    current_user.totp_enabled = False
-    current_user.backup_codes = ""
-    db.session.commit()
-    flash("2FA disabled.", "success")
-    return redirect(url_for("setup_2fa"))
-
-
-# ---- Wave 3: Duress settings ----
-@app.route("/settings/duress", methods=["GET", "POST"])
-@login_required
-def setup_duress():
-    form = DuressForm()
-    if form.validate_on_submit():
-        if not current_user.check_password(form.current_password.data):
-            flash("Current password is incorrect.", "error")
-        else:
-            dp = (form.duress_password.data or "").strip()
-            if dp and len(dp) < 6:
-                flash("Duress password must be at least 6 characters.", "error")
-            else:
-                current_user.set_duress(dp)
-                current_user.duress_contact = (form.duress_contact.data or "").strip()
-                db.session.commit()
-                audit("duress_updated",
-                      f"duress {'set' if dp else 'cleared'}",
-                      actor=current_user.username)
-                flash("Duress settings updated.", "success")
-                return redirect(url_for("dashboard"))
-    else:
-        form.duress_contact.data = current_user.duress_contact or ""
-    return render_template("setup_duress.html", form=form,
-                           has_duress=bool(current_user.duress_hash),
-                           contact=current_user.duress_contact)
-
-
-@app.route("/settings/sessions", methods=["GET", "POST"])
-@login_required
-def my_sessions():
-    if request.method == "POST":
-        sid = session.get("sid")
-        rows = db.session.execute(
-            db.select(SessionRecord).where(SessionRecord.user_id == current_user.id)
-        ).scalars().all()
-        for r in rows:
-            if r.session_id != sid:
-                r.revoked = True
-        db.session.commit()
-        flash("Other sessions revoked.", "success")
-        return redirect(url_for("my_sessions"))
-    rows = db.session.execute(
-        db.select(SessionRecord).where(SessionRecord.user_id == current_user.id,
-                                       SessionRecord.revoked == False)
-        .order_by(SessionRecord.last_seen.desc())
-    ).scalars().all()
-    return render_template("sessions.html", sessions=rows, current_sid=session.get("sid"))
+# ============================================================
+# DURESS HOME — the decoy page
+# ============================================================
+@app.route("/duress")
+def duress_home():
+    fake_cases = [
+        {"id": -1, "title": "Grocery list", "subject": "Personal", "items": 3},
+        {"id": -2, "title": "Work meeting notes", "subject": "Office", "items": 3},
+        {"id": -3, "title": "Books to read", "subject": "Personal", "items": 3},
+    ]
+    fake_recent = [
+        "Nothing new today",
+        "Remember to buy milk",
+        "Meeting moved to 3pm",
+        "Pay electricity bill",
+    ]
+    return render_template("dashboard_duress.html",
+                           fake_cases=fake_cases,
+                           fake_recent=fake_recent)
 
 
 # ============================================================
-# DASHBOARD
+# REAL DASHBOARD
 # ============================================================
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    # --- Duress mode: show decoy dashboard ---
     if is_duress_session():
-        # 3 fake cases with innocent titles
-        fake_cases = [
-            {"id": -1, "title": "Grocery list", "subject": "Personal"},
-            {"id": -2, "title": "Work meeting notes", "subject": "Office"},
-            {"id": -3, "title": "Books to read", "subject": "Personal"},
-        ]
-        return render_template("dashboard_duress.html", fake_cases=fake_cases)
+        return redirect(url_for("duress_home"))
 
     if current_user.role in (ROLE_TOP, ROLE_ANALYST):
         cases = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
@@ -1639,9 +1585,7 @@ def dashboard():
 @login_required
 def quick_add():
     if is_duress_session():
-        # Silently pretend to save, then redirect to decoy dashboard
-        flash("Saved.", "success")
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     if current_user.role != ROLE_AGENT:
         flash("Only the assigned Agent can log entries.", "error")
         return redirect(url_for("dashboard"))
@@ -1700,6 +1644,8 @@ def quick_add():
 @app.route("/media/<int:mid>/transcribe", methods=["POST"])
 @login_required
 def media_transcribe(mid):
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
     m = db.session.get(UpdateMedia, mid) or abort(404)
     if not m.update or not m.update.case:
         abort(404)
@@ -1720,7 +1666,7 @@ def media_transcribe(mid):
 @login_required
 def cases():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     if current_user.role != ROLE_TOP:
         flash("Only Top Secret can create cases.", "error")
         return redirect(url_for("dashboard"))
@@ -1754,7 +1700,7 @@ def cases():
 @login_required
 def case_detail(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1801,7 +1747,7 @@ def case_detail(cid):
 @login_required
 def case_delete(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_delete_case(current_user, c):
         flash("Only Top Secret can delete cases.", "error")
@@ -1819,8 +1765,7 @@ def case_delete(cid):
 @login_required
 def case_report(cid):
     if is_duress_session():
-        flash("Export unavailable.", "error")
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1852,7 +1797,7 @@ def case_report(cid):
 @require_role(ROLE_TOP)
 def case_rotate_key(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     old_key = unwrap_case_key(c.case_key_wrapped)
     if not old_key:
@@ -1883,7 +1828,7 @@ def case_rotate_key(cid):
 @login_required
 def case_custody(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1914,7 +1859,7 @@ def case_custody(cid):
 @login_required
 def case_custody_add(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1929,7 +1874,7 @@ def case_custody_add(cid):
 @login_required
 def custody_overview():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
         flash("Restricted.", "error")
         return redirect(url_for("dashboard"))
@@ -1946,7 +1891,7 @@ def custody_overview():
 @login_required
 def analyst_add(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_write_analyst_note(current_user, c):
         abort(403)
@@ -1970,7 +1915,7 @@ def analyst_add(cid):
 @login_required
 def analyst_note_edit(nid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     n = db.session.get(AnalystNote, nid) or abort(404)
     if n.created_by != current_user.username and current_user.role != ROLE_TOP:
         abort(403)
@@ -1988,7 +1933,7 @@ def analyst_note_edit(nid):
 @login_required
 def analyst_note_delete(nid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     n = db.session.get(AnalystNote, nid) or abort(404)
     if n.created_by != current_user.username and current_user.role != ROLE_TOP:
         abort(403)
@@ -2006,7 +1951,7 @@ def analyst_note_delete(nid):
 @login_required
 def analyst_workspace():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
         flash("Analyst access only.", "error")
         return redirect(url_for("dashboard"))
@@ -2025,7 +1970,7 @@ def analyst_workspace():
 @login_required
 def update_edit(uid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     u = db.session.get(Update, uid) or abort(404)
     if not can_write_case_entries(current_user, u.case):
         abort(403)
@@ -2069,7 +2014,7 @@ def update_edit(uid):
 @login_required
 def update_delete(uid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     u = db.session.get(Update, uid) or abort(404)
     if not can_write_case_entries(current_user, u.case):
         abort(403)
@@ -2088,7 +2033,7 @@ def update_delete(uid):
 @login_required
 def update_media_delete(uid, mid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     m = db.session.get(UpdateMedia, mid) or abort(404)
     if m.update_id != uid:
         abort(404)
@@ -2125,7 +2070,7 @@ def media_view(mid):
 @login_required
 def entities():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     form = EntityForm()
     if form.validate_on_submit():
         eid = request.form.get("entity_id", type=int)
@@ -2174,7 +2119,7 @@ def entities():
 @login_required
 def entity_detail(eid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     e = db.session.get(Entity, eid) or abort(404)
     cases = db.session.execute(
         db.select(CaseEntity).where(CaseEntity.entity_id == eid)
@@ -2186,7 +2131,7 @@ def entity_detail(eid):
 @login_required
 def entity_update(eid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     e = db.session.get(Entity, eid) or abort(404)
     if "region" in request.form:
         e.region = (request.form.get("region") or "").strip()
@@ -2203,7 +2148,7 @@ def entity_update(eid):
 @require_role(ROLE_TOP)
 def entity_delete(eid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     ok, err = delete_entity_and_children(eid)
     if not ok:
         flash(f"Delete failed: {err}", "error")
@@ -2214,7 +2159,7 @@ def entity_delete(eid):
 @login_required
 def case_entity_add(cid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_write_case_entries(current_user, c):
         abort(403)
@@ -2241,7 +2186,7 @@ def case_entity_add(cid):
 @login_required
 def case_entity_edit(link_id):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     link = db.session.get(CaseEntity, link_id) or abort(404)
     if not can_write_case_entries(current_user, link.case):
         abort(403)
@@ -2256,7 +2201,7 @@ def case_entity_edit(link_id):
 @login_required
 def case_entity_delete(link_id):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     link = db.session.get(CaseEntity, link_id) or abort(404)
     if not can_write_case_entries(current_user, link.case):
         abort(403)
@@ -2296,7 +2241,7 @@ def _similarity(name_a, name_b):
 @require_role(ROLE_TOP, ROLE_ANALYST)
 def resolution():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     rows = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None).order_by(Entity.name)
     ).scalars().all()
@@ -2339,7 +2284,7 @@ def _why_similar(a, b):
 @require_role(ROLE_TOP, ROLE_ANALYST)
 def resolution_merge():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     keep_id = request.form.get("keep_id", type=int)
     merge_id = request.form.get("merge_id", type=int)
     if not keep_id or not merge_id or keep_id == merge_id:
@@ -2393,7 +2338,7 @@ def resolution_merge():
 @require_role(ROLE_TOP)
 def resolution_unmerge(eid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     e = db.session.get(Entity, eid) or abort(404)
     e.merged_into_id = None
     db.session.commit()
@@ -2405,7 +2350,7 @@ def resolution_unmerge(eid):
 @login_required
 def graph():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     entities = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None)
     ).scalars().all()
@@ -2460,7 +2405,7 @@ def graph():
 @login_required
 def graph_path():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     a = request.args.get("from", type=int)
     b = request.args.get("to", type=int)
     if not a or not b:
@@ -2491,7 +2436,7 @@ def graph_path():
 @login_required
 def deep_search():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     q = (request.args.get("q") or "").strip()
     results = {"cases": [], "updates": [], "analyst_notes": [], "entities": [], "voice": []}
     if q:
@@ -2539,7 +2484,7 @@ def deep_search():
 @require_role(ROLE_TOP)
 def deep_search_reindex():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     SearchIndex.query.delete()
     for c in db.session.execute(db.select(Case)).scalars().all():
         index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
@@ -2565,18 +2510,14 @@ def deep_search_reindex():
 @login_required
 def patterns():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
         flash("Analyst or Top Secret only.", "error")
         return redirect(url_for("dashboard"))
-
-    # Gather updates the user can see
     all_updates = db.session.execute(
         db.select(Update).order_by(Update.happened_at.asc())
     ).scalars().all()
     visible = [u for u in all_updates if can_view_case(current_user, u.case)]
-
-    # --- Co-occurrence: which entity names appear together in the same update ---
     cooc = Counter()
     entities = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None)
@@ -2593,49 +2534,30 @@ def patterns():
             for j in range(i + 1, len(hits)):
                 key = tuple(sorted((hits[i], hits[j])))
                 cooc[key] += 1
-
     co_occurrences = []
     for (a, b), count in cooc.most_common(15):
         if count >= 2:
-            co_occurrences.append({
-                "a": entity_by_id.get(a),
-                "b": entity_by_id.get(b),
-                "count": count,
-            })
-
-    # --- Temporal patterns: activity by weekday ---
+            co_occurrences.append({"a": entity_by_id.get(a), "b": entity_by_id.get(b), "count": count})
     weekday_counts = Counter()
     hour_counts = Counter()
     for u in visible:
         dt = u.happened_at
         weekday_counts[dt.strftime("%A")] += 1
         hour_counts[dt.hour] += 1
-
     weekday_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
     weekday_data = [(d, weekday_counts.get(d, 0)) for d in weekday_order]
     max_weekday = max([c for _, c in weekday_data]) or 1
-
     hour_data = [(h, hour_counts.get(h, 0)) for h in range(24)]
     max_hour = max([c for _, c in hour_data]) or 1
-
-    # --- Anomaly: unusually long updates ---
     lengths = [len(u.body or "") for u in visible if u.body]
     avg_len = sum(lengths) / len(lengths) if lengths else 0
     long_updates = [u for u in visible if u.body and len(u.body) > avg_len * 2.5 and len(u.body) > 300][:10]
-
-    # --- Slow periods: 14+ day gaps ---
     gaps = []
     sorted_updates = sorted(visible, key=lambda u: u.happened_at)
     for i in range(1, len(sorted_updates)):
         delta = sorted_updates[i].happened_at - sorted_updates[i-1].happened_at
         if delta.days >= 14:
-            gaps.append({
-                "from": sorted_updates[i-1].happened_at,
-                "to": sorted_updates[i].happened_at,
-                "days": delta.days,
-            })
-
-    # --- First appearance of each entity ---
+            gaps.append({"from": sorted_updates[i-1].happened_at, "to": sorted_updates[i].happened_at, "days": delta.days})
     first_appearances = []
     for e in entities:
         name_lower = e.name.lower()
@@ -2645,8 +2567,6 @@ def patterns():
                 break
     first_appearances.sort(key=lambda x: x["when"], reverse=True)
     first_appearances = first_appearances[:10]
-
-    # --- Co-location in same region ---
     same_region = []
     region_groups = defaultdict(list)
     for e in entities:
@@ -2655,14 +2575,12 @@ def patterns():
     for region, group in region_groups.items():
         if len(group) >= 2:
             same_region.append({"region": group[0].region, "entities": group})
-
     stats = {
         "total_updates": len(visible),
         "avg_length": int(avg_len),
         "unique_entities": len(entities),
         "co_occurrences": len(co_occurrences),
     }
-
     return render_template("patterns.html",
                            stats=stats,
                            co_occurrences=co_occurrences,
@@ -2677,19 +2595,17 @@ def patterns():
 
 
 # ============================================================
-# WAVE 3 — GEOSPATIAL ANALYSIS
+# WAVE 3 — GEOSPATIAL
 # ============================================================
 @app.route("/geo")
 @login_required
 def geo():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     entities = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None)
     ).scalars().all()
     with_coords = [e for e in entities if e.latitude and e.longitude]
-
-    # Group by region for co-location
     region_groups = defaultdict(list)
     for e in entities:
         if e.region:
@@ -2698,14 +2614,10 @@ def geo():
     for region, group in region_groups.items():
         if len(group) >= 2:
             co_located.append({"region": group[0].region, "entities": group})
-
-    # Build heatmap points (region name -> count)
     region_counts = Counter()
     for e in entities:
         if e.region:
             region_counts[e.region] += 1
-
-    # Build markers for map
     markers = [{
         "id": e.id, "name": e.name, "type": e.type,
         "lat": e.latitude, "lng": e.longitude,
@@ -2713,8 +2625,6 @@ def geo():
         "color": {"LOW": "#3fb950", "MEDIUM": "#ffb000",
                   "HIGH": "#ff7b00", "CRITICAL": "#ff3b30"}.get(e.threat_level, "#8a8577"),
     } for e in with_coords]
-
-    # Entity-to-entity proximity (within 0.5 degrees)
     nearby_pairs = []
     for i in range(len(with_coords)):
         for j in range(i + 1, len(with_coords)):
@@ -2723,7 +2633,6 @@ def geo():
             dlng = abs(a.longitude - b.longitude)
             if dlat < 0.5 and dlng < 0.5:
                 nearby_pairs.append({"a": a, "b": b, "dlat": dlat, "dlng": dlng})
-
     return render_template("geo.html",
                            markers=markers,
                            co_located=co_located,
@@ -2739,7 +2648,7 @@ def geo():
 @login_required
 def relationships():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     form = RelationshipForm()
     form.from_id.choices = entity_choices()
     form.to_id.choices = entity_choices()
@@ -2762,7 +2671,7 @@ def relationships():
 @login_required
 def relationship_delete(rid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     r = db.session.get(Relationship, rid) or abort(404)
     db.session.delete(r)
     db.session.commit()
@@ -2773,7 +2682,7 @@ def relationship_delete(rid):
 @login_required
 def contacts():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     form = SourceForm()
     if form.validate_on_submit():
         s = Source(handle=form.handle.data)
@@ -2790,7 +2699,7 @@ def contacts():
 @login_required
 def contact_delete(sid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     s = db.session.get(Source, sid) or abort(404)
     db.session.delete(s)
     db.session.commit()
@@ -2801,7 +2710,7 @@ def contact_delete(sid):
 @login_required
 def search():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     q = (request.args.get("q") or "").strip()
     results = {"cases": [], "updates": [], "entities": []}
     if q:
@@ -2825,7 +2734,7 @@ def search():
 @require_role(ROLE_TOP)
 def activity():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     rows = db.session.execute(db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(300)).scalars().all()
     return render_template("audit.html", entries=rows)
 
@@ -2837,7 +2746,7 @@ def activity():
 @login_required
 def drops():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     form = DeadDropForm()
     if form.validate_on_submit():
         d = DeadDrop(title=form.title.data, unlock_at=form.unlock_at.data,
@@ -2855,7 +2764,7 @@ def drops():
 @login_required
 def drop_delete(did):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     d = db.session.get(DeadDrop, did) or abort(404)
     db.session.delete(d)
     db.session.commit()
@@ -2866,7 +2775,7 @@ def drop_delete(did):
 @login_required
 def briefing():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     days = int(request.args.get("days", 1))
     since = datetime.now() - timedelta(days=days)
     updates = db.session.execute(
@@ -2880,7 +2789,7 @@ def briefing():
 @login_required
 def map_view():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     people = db.session.execute(db.select(Entity)).scalars().all()
     markers = []
     for p in people:
@@ -2903,7 +2812,7 @@ def map_view():
 @require_role(ROLE_TOP)
 def backups():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     rows = db.session.execute(db.select(Backup).order_by(Backup.created_at.desc())).scalars().all()
     return render_template("backups.html", backups=rows)
 
@@ -2913,7 +2822,7 @@ def backups():
 @require_role(ROLE_TOP)
 def backup_create():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     password = (request.form.get("password") or "").strip()
     if len(password) < 8:
         flash("Backup password must be at least 8 characters.", "error")
@@ -2935,7 +2844,7 @@ def backup_create():
 @login_required
 def integrity():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     issues = []
     for c in db.session.execute(db.select(Case)).scalars().all():
         expected = compute_integrity(c)
@@ -2953,7 +2862,7 @@ def integrity():
 @require_role(ROLE_TOP)
 def users():
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     form = UserForm()
     if form.validate_on_submit():
         uname = form.username.data.strip()
@@ -2977,7 +2886,7 @@ def users():
 @require_role(ROLE_TOP)
 def user_delete(uid):
     if is_duress_session():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("duress_home"))
     if uid == current_user.id:
         flash("Cannot delete yourself.", "error")
         return redirect(url_for("users"))
@@ -2985,6 +2894,118 @@ def user_delete(uid):
     db.session.delete(u)
     db.session.commit()
     return redirect(url_for("users"))
+
+
+# ============================================================
+# SETTINGS — password / 2fa / duress / sessions
+# ============================================================
+@app.route("/settings/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    form = ChangePasswordForm()
+    if form.validate_on_submit():
+        if not current_user.check_password(form.current.data):
+            flash("Current password is incorrect.", "error")
+        else:
+            current_user.set_password(form.new.data)
+            db.session.commit()
+            audit("password_change", current_user.username, actor=current_user.username)
+            flash("Password updated.", "success")
+            return redirect(url_for("dashboard"))
+    return render_template("change_password.html", form=form)
+
+
+@app.route("/settings/2fa", methods=["GET", "POST"])
+@login_required
+def setup_2fa():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    if not current_user.totp_secret:
+        current_user.totp_secret = pyotp.random_base32()
+        db.session.commit()
+    otp_uri = pyotp.TOTP(current_user.totp_secret).provisioning_uri(
+        name=current_user.username, issuer_name="MIS")
+    form = Setup2FAForm()
+    backup_codes = None
+    if form.validate_on_submit():
+        if pyotp.TOTP(current_user.totp_secret).verify(form.code.data.strip(), valid_window=1):
+            current_user.totp_enabled = True
+            backup_codes = current_user.generate_backup_codes()
+            db.session.commit()
+            audit("2fa_enabled", current_user.username, actor=current_user.username)
+            flash("2FA enabled.", "success")
+        else:
+            flash("Invalid code.", "error")
+    return render_template("setup_2fa.html", form=form,
+                           secret=current_user.totp_secret, otp_uri=otp_uri,
+                           enabled=current_user.totp_enabled, backup_codes=backup_codes)
+
+
+@app.route("/settings/2fa/disable", methods=["POST"])
+@login_required
+def disable_2fa():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    current_user.totp_enabled = False
+    current_user.backup_codes = ""
+    db.session.commit()
+    flash("2FA disabled.", "success")
+    return redirect(url_for("setup_2fa"))
+
+
+@app.route("/settings/duress", methods=["GET", "POST"])
+@login_required
+def setup_duress():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    form = DuressForm()
+    if form.validate_on_submit():
+        if not current_user.check_password(form.current_password.data):
+            flash("Current password is incorrect.", "error")
+        else:
+            dp = (form.duress_password.data or "").strip()
+            if dp and len(dp) < 6:
+                flash("Duress password must be at least 6 characters.", "error")
+            else:
+                current_user.set_duress(dp)
+                current_user.duress_contact = (form.duress_contact.data or "").strip()
+                db.session.commit()
+                audit("duress_updated",
+                      f"duress {'set' if dp else 'cleared'}",
+                      actor=current_user.username)
+                flash("Duress settings updated.", "success")
+                return redirect(url_for("dashboard"))
+    else:
+        form.duress_contact.data = current_user.duress_contact or ""
+    return render_template("setup_duress.html", form=form,
+                           has_duress=bool(current_user.duress_hash),
+                           contact=current_user.duress_contact)
+
+
+@app.route("/settings/sessions", methods=["GET", "POST"])
+@login_required
+def my_sessions():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    if request.method == "POST":
+        sid = session.get("sid")
+        rows = db.session.execute(
+            db.select(SessionRecord).where(SessionRecord.user_id == current_user.id)
+        ).scalars().all()
+        for r in rows:
+            if r.session_id != sid:
+                r.revoked = True
+        db.session.commit()
+        flash("Other sessions revoked.", "success")
+        return redirect(url_for("my_sessions"))
+    rows = db.session.execute(
+        db.select(SessionRecord).where(SessionRecord.user_id == current_user.id,
+                                       SessionRecord.revoked == False)
+        .order_by(SessionRecord.last_seen.desc())
+    ).scalars().all()
+    return render_template("sessions.html", sessions=rows, current_sid=session.get("sid"))
 
 
 # ============================================================
