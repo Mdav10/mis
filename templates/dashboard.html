@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Home{% endblock %}
 {% block content %}
+
+<section class="card mis-install-btn" style="display:none;border-color:var(--amber);">
+  <h2>⬇ Install MIS as an App</h2>
+  <p class="dim">Add MIS to your home screen — opens full-screen, no browser chrome. Works offline for cached pages.</p>
+  <button onclick="doInstall()" class="primary big" style="width:100%;">📲 Install App</button>
+</section>
+
 {% if dm_status == 'overdue' %}
 <section class="card" style="border-color:var(--red);">
   <h2 style="color:var(--red)">⚠ DEAD MAN'S SWITCH OVERDUE</h2>
