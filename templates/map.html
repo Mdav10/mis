@@ -56,9 +56,7 @@
     backgroundColor: '#000',
   }).setView(WORLD_CENTER, WORLD_ZOOM);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap · © CARTO', subdomains:'abcd'
-  }).addTo(map);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 });
 
   markers.forEach(m => {
     L.circleMarker([m.lat, m.lng], {
