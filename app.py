@@ -1,10 +1,12 @@
 # ============================================================
-# MIS v15 — Restored proper AES-256 PDF + encrypted backups
+# MIS v16 — Wave 1: Entity Resolution + Link Graph + Encrypted Search
+# Base: v15 (strict roles, proper AES-256 PDF, encrypted backups)
 # ============================================================
 
-import os, io, json, hmac, hashlib, secrets, base64
+import os, io, json, hmac, hashlib, secrets, base64, re
 from datetime import datetime, timedelta
 from functools import wraps
+from collections import Counter
 
 from flask import (
     Flask, render_template, redirect, url_for, request,
@@ -27,6 +29,8 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from sqlalchemy import or_, text, inspect
 
+import networkx as nx
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -44,44 +48,19 @@ load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
-
-
-
+# ============================================================
+# CONFIG
+# ============================================================
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
-
-    _db = os.getenv(
-        "DATABASE_URL",
-        f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}"
-    )
-
+    _db = os.getenv("DATABASE_URL",
+                    f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
     if _db.startswith("postgres://"):
         _db = _db.replace("postgres://", "postgresql://", 1)
-
-    if _db.startswith("postgresql://"):
-        _db = _db.replace(
-            "postgresql://",
-            "postgresql+psycopg2://",
-            1
-        )
-
-    SQLALCHEMY_DATABASE_URI = _db
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,
-        "pool_recycle": 300
-    }
-    WTF_CSRF_TIME_LIMIT = None
-
-
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
     WTF_CSRF_TIME_LIMIT = None
-
-
-
-
     MAX_CONTENT_LENGTH = 80 * 1024 * 1024
     INITIAL_USERNAME = os.getenv("INITIAL_USERNAME", "Mpc")
     INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "08800Mpc!")
@@ -161,6 +140,42 @@ def parse_local_dt(s):
         except ValueError:
             continue
     return None
+
+
+# ============================================================
+# KEYWORD EXTRACTION (for encrypted search index)
+# ============================================================
+STOPWORDS = set("""
+a an the and or but if then else of in on at to for from with by is are was were be been
+being have has had do does did this that these those it its i you he she we they them
+his her him us our your my their as not no yes very more most some any all
+""".split())
+
+
+def extract_keywords(text_value):
+    """Return a set of lowercase tokens 3+ chars, minus stopwords."""
+    if not text_value:
+        return set()
+    words = re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", text_value.lower())
+    return {w for w in words if w not in STOPWORDS and len(w) >= 3}
+
+
+def keyword_hash(word):
+    """HMAC of word using master key so the index is not a plain dictionary."""
+    return hmac.new(get_master_key(), word.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+
+
+def index_text(source_type, source_id, plain_text, case_id=None):
+    """Rebuild search index entries for a given source object.
+    Deletes existing rows first, then inserts keywords."""
+    SearchIndex.query.filter_by(source_type=source_type, source_id=source_id).delete()
+    for word in extract_keywords(plain_text):
+        db.session.add(SearchIndex(
+            source_type=source_type,
+            source_id=source_id,
+            case_id=case_id,
+            kw_hash=keyword_hash(word),
+        ))
 
 
 # ============================================================
@@ -362,6 +377,7 @@ class Entity(db.Model):
     region = db.Column(db.String(120), default="")
     latitude = db.Column(db.Float, default=0)
     longitude = db.Column(db.Float, default=0)
+    merged_into_id = db.Column(db.Integer, nullable=True)  # for merges
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
@@ -463,6 +479,17 @@ class Backup(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class SearchIndex(db.Model):
+    """Encrypted search index — one row per keyword per source object."""
+    __tablename__ = "mis_search_index"
+    id = db.Column(db.Integer, primary_key=True)
+    source_type = db.Column(db.String(40), index=True)   # case, update, analyst_note, entity
+    source_id = db.Column(db.Integer, index=True)
+    case_id = db.Column(db.Integer, index=True, nullable=True)
+    kw_hash = db.Column(db.String(32), index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 def audit(action, detail="", actor="system"):
     try:
         db.session.add(AuditLog(action=action, detail=detail, actor=actor))
@@ -513,6 +540,7 @@ MIGRATIONS = {
         ("region", "VARCHAR(120) DEFAULT ''"),
         ("latitude", "DOUBLE PRECISION DEFAULT 0"),
         ("longitude", "DOUBLE PRECISION DEFAULT 0"),
+        ("merged_into_id", "INTEGER"),
     ],
     "mis_case_entities": [
         ("role", "VARCHAR(80) DEFAULT 'Other'"),
@@ -607,6 +635,7 @@ def delete_case_and_children(cid):
                 ("mis_analyst_notes", "case_id"),
                 ("mis_case_entities", "case_id"),
                 ("mis_updates", "case_id"),
+                ("mis_search_index", "case_id"),
                 ("mis_cases", "id"),
             ]:
                 try:
@@ -640,6 +669,7 @@ def delete_update_and_children(uid):
     try:
         with db.engine.begin() as conn:
             conn.execute(text("DELETE FROM mis_update_media WHERE update_id = :uid"), {"uid": uid})
+            conn.execute(text("DELETE FROM mis_search_index WHERE source_type = 'update' AND source_id = :uid"), {"uid": uid})
             conn.execute(text("DELETE FROM mis_updates WHERE id = :uid"), {"uid": uid})
         return True, None
     except Exception as e:
@@ -799,7 +829,9 @@ def agent_choices():
 
 
 def entity_choices():
-    rows = db.session.execute(db.select(Entity).order_by(Entity.name)).scalars().all()
+    rows = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None).order_by(Entity.name)
+    ).scalars().all()
     return [(e.id, f"{e.name} ({e.type})") for e in rows]
 
 
@@ -817,7 +849,7 @@ def esc(s):
 
 
 # ============================================================
-# PDF BUILDER
+# PDF
 # ============================================================
 def build_pdf(case, template="full"):
     buf = io.BytesIO()
@@ -955,21 +987,7 @@ def build_pdf(case, template="full"):
     return buf.getvalue()
 
 
-# ============================================================
-# PDF ENCRYPTION — THE FIX
-# ============================================================
 def encrypt_pdf_with_attachments(pdf_bytes, password, attachments):
-    """Real AES-256 password-protected PDF.
-
-    Rules to make it actually prompt for password on every reader:
-      - user_password = owner_password = the password you typed
-      - algorithm = AES-256
-      - permissions_flag with all bits allowed once unlocked
-      - We *verify* the output by re-reading it in memory. If pypdf
-        would let us read it WITHOUT the password, we re-encrypt
-        with a fallback that is known to work.
-    """
-    # --- Pass 1: standard pypdf AES-256 ---
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
         writer = PdfWriter()
@@ -980,29 +998,21 @@ def encrypt_pdf_with_attachments(pdf_bytes, password, attachments):
                 writer.add_attachment(filename=att["name"], data=att["data"])
             except Exception as e:
                 print(f"⚠️  Attach failed {att.get('name')}: {e}")
-        writer.encrypt(
-            user_password=password,
-            owner_password=password,
-            permissions_flag=-1,      # allow everything once unlocked
-            algorithm="AES-256",
-        )
+        writer.encrypt(user_password=password, owner_password=password,
+                       permissions_flag=-1, algorithm="AES-256")
         out = io.BytesIO()
         writer.write(out)
         blob = out.getvalue()
-
-        # Verify: we must NOT be able to read without the password.
         try:
             verify = PdfReader(io.BytesIO(blob))
             if verify.is_encrypted:
-                # Try to decrypt WITHOUT password — should fail
                 try:
-                    result = verify.decrypt("")
-                    if result != 0:
-                        # uh oh — empty password unlocked it
-                        print("⚠️  PDF opened with empty password — forcing fallback")
+                    r = verify.decrypt("")
+                    if r != 0:
+                        print("⚠️  PDF opened with empty password — fallback")
                         return _encrypt_pdf_fallback(pdf_bytes, password, attachments)
                 except Exception:
-                    pass  # good — refused empty password
+                    pass
             return blob
         except Exception:
             return blob
@@ -1012,16 +1022,7 @@ def encrypt_pdf_with_attachments(pdf_bytes, password, attachments):
 
 
 def _encrypt_pdf_fallback(pdf_bytes, password, attachments):
-    """Second attempt: some pypdf versions honour RC4+AES-128 more
-    reliably than AES-256 when the user/owner passwords are the same.
-    We try each algorithm in order until one produces a file that
-    refuses to open without the password."""
-    attempts = [
-        ("AES-256", 3),
-        ("AES-128", 2),
-        ("RC4-128", 1),
-    ]
-    for algorithm, _v in attempts:
+    for algorithm in ("AES-256", "AES-128", "RC4-128"):
         try:
             reader = PdfReader(io.BytesIO(pdf_bytes))
             writer = PdfWriter()
@@ -1032,71 +1033,42 @@ def _encrypt_pdf_fallback(pdf_bytes, password, attachments):
                     writer.add_attachment(filename=att["name"], data=att["data"])
                 except Exception:
                     pass
-            writer.encrypt(
-                user_password=password,
-                owner_password=password,
-                permissions_flag=-1,
-                algorithm=algorithm,
-            )
+            writer.encrypt(user_password=password, owner_password=password,
+                           permissions_flag=-1, algorithm=algorithm)
             out = io.BytesIO()
             writer.write(out)
             blob = out.getvalue()
-
-            # verify it prompts
             v = PdfReader(io.BytesIO(blob))
             if v.is_encrypted:
                 try:
                     r = v.decrypt("")
                     if r == 0:
-                        # opened with empty → keep trying
                         continue
                 except Exception:
                     return blob
             else:
-                # not even marked as encrypted → keep trying
                 continue
             return blob
         except Exception as e:
             print(f"⚠️  Fallback {algorithm} failed: {e}")
-            continue
-    # last resort: return the primary output anyway
-    print("🚨 All PDF encryption attempts failed — returning best effort")
     return pdf_bytes
 
 
-# ============================================================
-# BACKUP ENCRYPTION — with plaintext header marker
-# ============================================================
 def make_encrypted_backup(password):
-    """Return (blob, case_count). Blob is:
-       b'MISB1' + ascii_header_length(4) + header + salt(16) + nonce(12) + ct
-       Header is JSON with date + case count + note.
-    """
     data = {"created_at": datetime.utcnow().isoformat(), "cases": []}
     for c in db.session.execute(db.select(Case)).scalars().all():
         cd = {"id": c.id, "title": c.title, "subject": c.subject, "notes": c.notes,
               "status": c.status, "priority": c.priority, "threat_level": c.threat_level,
               "updates": []}
         for u in c.updates:
-            cd["updates"].append({
-                "when": u.happened_at.isoformat(),
-                "body": u.body,
-                "media_count": len(u.photos),
-            })
+            cd["updates"].append({"when": u.happened_at.isoformat(), "body": u.body,
+                                  "media_count": len(u.photos)})
         data["cases"].append(cd)
-
-    header = {
-        "product": "MIS",
-        "format": "misbak-v1",
-        "algorithm": "AES-256-GCM",
-        "key_derivation": "SHA-256(password)",
-        "note": "Decrypt with the same password you entered.",
-        "created_at": data["created_at"],
-        "case_count": len(data["cases"]),
-    }
+    header = {"product": "MIS", "format": "misbak-v1", "algorithm": "AES-256-GCM",
+              "key_derivation": "SHA-256(password+salt)", "created_at": data["created_at"],
+              "case_count": len(data["cases"])}
     header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
     header_len = len(header_bytes).to_bytes(4, "big")
-
     raw = json.dumps(data, indent=2).encode("utf-8")
     nonce = secrets.token_bytes(12)
     salt = secrets.token_bytes(16)
@@ -1372,6 +1344,7 @@ def quick_add():
     db.session.add(u)
     db.session.flush()
     u.integrity_hash = compute_integrity(u, extra=u.body_enc[:32])
+    index_text("update", u.id, body, case_id=case.id)
     for kind, f in files:
         raw = f.read()
         if not raw:
@@ -1409,6 +1382,7 @@ def cases():
         db.session.add(c)
         db.session.flush()
         c.integrity_hash = compute_integrity(c)
+        index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
         db.session.commit()
         audit("case_create", c.title, actor=current_user.username)
         flash("Case opened and assigned.", "success")
@@ -1438,6 +1412,7 @@ def case_detail(cid):
         c.due_date = form.due_date.data
         c.assigned_agent_id = form.assigned_agent_id.data or None
         c.integrity_hash = compute_integrity(c)
+        index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
         db.session.commit()
         flash("Case updated.", "success")
         return redirect(url_for("case_detail", cid=c.id))
@@ -1507,6 +1482,8 @@ def analyst_add(cid):
                         title=form.title.data, created_by=current_user.username)
         n.body = form.body.data
         db.session.add(n)
+        db.session.flush()
+        index_text("analyst_note", n.id, f"{n.title} {n.body}", case_id=c.id)
         db.session.commit()
         audit("analyst_note_add", f"{n.category}: {n.title}", actor=current_user.username)
         flash("Analysis saved.", "success")
@@ -1522,6 +1499,7 @@ def analyst_note_edit(nid):
     n.category = request.form.get("category") or n.category
     n.title = request.form.get("title") or n.title
     n.body = request.form.get("body") or n.body
+    index_text("analyst_note", n.id, f"{n.title} {n.body}", case_id=n.case_id)
     db.session.commit()
     flash("Analysis updated.", "success")
     return redirect(url_for("case_detail", cid=n.case_id))
@@ -1534,6 +1512,7 @@ def analyst_note_delete(nid):
     if n.created_by != current_user.username and current_user.role != ROLE_TOP:
         abort(403)
     cid = n.case_id
+    SearchIndex.query.filter_by(source_type="analyst_note", source_id=nid).delete()
     db.session.delete(n)
     db.session.commit()
     flash("Analysis removed.", "success")
@@ -1586,6 +1565,7 @@ def update_edit(uid):
                                 mimetype=f.mimetype or "application/octet-stream",
                                 data=raw, sha256=sha256_bytes(raw)))
         u.integrity_hash = compute_integrity(u, extra=u.body_enc[:32])
+        index_text("update", u.id, u.body, case_id=u.case_id)
         db.session.commit()
         flash("Entry updated.", "success")
         return redirect(url_for("case_detail", cid=u.case_id))
@@ -1637,7 +1617,7 @@ def media_view(mid):
 
 
 # ============================================================
-# ENTITIES — enriched
+# ENTITIES (with dedupe awareness)
 # ============================================================
 @app.route("/entities", methods=["GET", "POST"])
 @login_required
@@ -1656,6 +1636,7 @@ def entities():
                 if form.longitude.data: e.longitude = float(form.longitude.data)
             except Exception:
                 pass
+            index_text("entity", e.id, f"{e.name} {e.notes} {e.region}")
             db.session.commit()
             flash("Person updated.", "success")
         else:
@@ -1667,12 +1648,16 @@ def entities():
             except Exception:
                 pass
             db.session.add(e)
+            db.session.flush()
+            index_text("entity", e.id, f"{e.name} {e.notes} {e.region}")
             db.session.commit()
             audit("entity_create", e.name, actor=current_user.username)
             flash("Person saved.", "success")
         return redirect(url_for("entities"))
 
-    rows = db.session.execute(db.select(Entity).order_by(Entity.name)).scalars().all()
+    rows = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None).order_by(Entity.name)
+    ).scalars().all()
     people_data = []
     for p in rows:
         links = db.session.execute(
@@ -1700,6 +1685,7 @@ def entity_update(eid):
         e.region = (request.form.get("region") or "").strip()
     if "notes" in request.form:
         e.notes = (request.form.get("notes") or "").strip()
+    index_text("entity", e.id, f"{e.name} {e.notes} {e.region}")
     db.session.commit()
     flash("Updated.", "success")
     return redirect(request.referrer or url_for("entities"))
@@ -1728,6 +1714,7 @@ def case_entity_add(cid):
         e = Entity(name=name, type="Person")
         db.session.add(e)
         db.session.flush()
+        index_text("entity", e.id, f"{e.name}")
         link = CaseEntity(case_id=c.id, entity_id=e.id, role=role)
         link.note = note
         db.session.add(link)
@@ -1763,7 +1750,333 @@ def case_entity_delete(link_id):
 
 
 # ============================================================
-# RELATIONSHIPS
+# WAVE 1 FEATURE — ENTITY RESOLUTION
+# ============================================================
+def _similarity(name_a, name_b):
+    """Simple name similarity 0..1 — lowercase token overlap + Levenshtein-lite."""
+    a = name_a.lower().strip()
+    b = name_b.lower().strip()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    # token overlap
+    ta = set(re.findall(r"[a-z0-9]+", a))
+    tb = set(re.findall(r"[a-z0-9]+", b))
+    if not ta or not tb:
+        return 0.0
+    jaccard = len(ta & tb) / len(ta | tb)
+    # prefix match bonus
+    prefix = 0.0
+    if a[0] == b[0]:
+        prefix += 0.1
+    if a[:4] == b[:4]:
+        prefix += 0.15
+    # substring bonus
+    if a in b or b in a:
+        prefix += 0.2
+    return min(1.0, jaccard + prefix)
+
+
+@app.route("/resolution")
+@login_required
+@require_role(ROLE_TOP, ROLE_ANALYST)
+def resolution():
+    """Suggest possible duplicate entities for merging."""
+    rows = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None).order_by(Entity.name)
+    ).scalars().all()
+    suggestions = []
+    for i in range(len(rows)):
+        for j in range(i + 1, len(rows)):
+            a, b = rows[i], rows[j]
+            if a.type != b.type:
+                continue
+            sim = _similarity(a.name, b.name)
+            # also boost if same region
+            if a.region and b.region and a.region.lower() == b.region.lower():
+                sim += 0.15
+            if sim >= 0.5:
+                suggestions.append({
+                    "a": a, "b": b, "similarity": round(sim, 2),
+                    "reason": _why_similar(a, b),
+                })
+    suggestions.sort(key=lambda s: s["similarity"], reverse=True)
+    return render_template("resolution.html", suggestions=suggestions)
+
+
+def _why_similar(a, b):
+    reasons = []
+    if a.name.lower() == b.name.lower():
+        reasons.append("identical name")
+    if a.region and b.region and a.region.lower() == b.region.lower():
+        reasons.append(f"same region ({a.region})")
+    if a.type == b.type:
+        reasons.append(f"same type ({a.type})")
+    # common tokens
+    ta = set(re.findall(r"[a-z]+", a.name.lower()))
+    tb = set(re.findall(r"[a-z]+", b.name.lower()))
+    common = ta & tb
+    if common:
+        reasons.append("shares name parts: " + ", ".join(sorted(common)))
+    return " · ".join(reasons) or "similar spelling"
+
+
+@app.route("/resolution/merge", methods=["POST"])
+@login_required
+@require_role(ROLE_TOP, ROLE_ANALYST)
+def resolution_merge():
+    keep_id = request.form.get("keep_id", type=int)
+    merge_id = request.form.get("merge_id", type=int)
+    if not keep_id or not merge_id or keep_id == merge_id:
+        flash("Invalid merge.", "error")
+        return redirect(url_for("resolution"))
+    keep = db.session.get(Entity, keep_id)
+    merge = db.session.get(Entity, merge_id)
+    if not keep or not merge:
+        flash("Entity not found.", "error")
+        return redirect(url_for("resolution"))
+
+    # Repoint CaseEntity links
+    links = db.session.execute(
+        db.select(CaseEntity).where(CaseEntity.entity_id == merge.id)
+    ).scalars().all()
+    for link in links:
+        existing = db.session.execute(
+            db.select(CaseEntity).where(
+                CaseEntity.case_id == link.case_id,
+                CaseEntity.entity_id == keep.id
+            )
+        ).scalar()
+        if existing:
+            # merge notes: keep both, semicolon-separated
+            if link.note and link.note not in (existing.note or ""):
+                existing.note = ((existing.note or "") + "\n" + link.note).strip()
+            db.session.delete(link)
+        else:
+            link.entity_id = keep.id
+
+    # Repoint relationships
+    rels = db.session.execute(
+        db.select(Relationship).where(
+            or_(Relationship.from_id == merge.id, Relationship.to_id == merge.id)
+        )
+    ).scalars().all()
+    for r in rels:
+        if r.from_id == merge.id:
+            r.from_id = keep.id
+        if r.to_id == merge.id:
+            r.to_id = keep.id
+        # avoid self-loops
+        if r.from_id == r.to_id:
+            db.session.delete(r)
+
+    # Append notes
+    if merge.notes and merge.notes not in (keep.notes or ""):
+        keep.notes = ((keep.notes or "") + "\n" + merge.notes).strip()
+
+    # Mark merged entity
+    merge.merged_into_id = keep.id
+
+    index_text("entity", keep.id, f"{keep.name} {keep.notes} {keep.region}")
+    db.session.commit()
+    audit("entity_merge", f"{merge.name} → {keep.name}", actor=current_user.username)
+    flash(f"Merged '{merge.name}' into '{keep.name}'.", "success")
+    return redirect(url_for("resolution"))
+
+
+@app.route("/resolution/unmerge/<int:eid>", methods=["POST"])
+@login_required
+@require_role(ROLE_TOP)
+def resolution_unmerge(eid):
+    e = db.session.get(Entity, eid) or abort(404)
+    e.merged_into_id = None
+    db.session.commit()
+    flash(f"'{e.name}' restored as standalone entity.", "success")
+    return redirect(url_for("resolution"))
+
+
+# ============================================================
+# WAVE 1 FEATURE — LINK GRAPH
+# ============================================================
+@app.route("/graph")
+@login_required
+def graph():
+    entities = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None)
+    ).scalars().all()
+    rels = db.session.execute(db.select(Relationship)).scalars().all()
+
+    G = nx.Graph()
+    entity_map = {e.id: e for e in entities}
+    for e in entities:
+        G.add_node(e.id)
+    for r in rels:
+        if r.from_id in entity_map and r.to_id in entity_map:
+            if G.has_edge(r.from_id, r.to_id):
+                G[r.from_id][r.to_id]["weight"] += 1
+                G[r.from_id][r.to_id]["relations"].append(r.relation)
+            else:
+                G.add_edge(r.from_id, r.to_id, weight=1, relations=[r.relation])
+
+    # Communities (greedy modularity)
+    communities = {}
+    if G.number_of_nodes() > 0:
+        try:
+            for i, c in enumerate(nx.algorithms.community.greedy_modularity_communities(G)):
+                for node in c:
+                    communities[node] = i
+        except Exception:
+            for node in G.nodes:
+                communities[node] = 0
+
+    # Centrality
+    try:
+        centrality = nx.degree_centrality(G) if G.number_of_nodes() else {}
+    except Exception:
+        centrality = {}
+
+    # Build node list for visualization
+    nodes = []
+    for e in entities:
+        nodes.append({
+            "id": e.id,
+            "name": e.name,
+            "type": e.type,
+            "threat": e.threat_level,
+            "region": e.region,
+            "community": communities.get(e.id, 0),
+            "degree": G.degree(e.id) if e.id in G else 0,
+            "centrality": round(centrality.get(e.id, 0), 3) if centrality else 0,
+        })
+
+    # Build edges list
+    edges = []
+    for u, v, data in G.edges(data=True):
+        edges.append({
+            "source": u, "target": v,
+            "weight": data.get("weight", 1),
+            "relations": data.get("relations", []),
+        })
+
+    # Top connected nodes
+    top = sorted(nodes, key=lambda n: n["degree"], reverse=True)[:10]
+
+    return render_template("graph.html", nodes=nodes, edges=edges, top=top,
+                           num_nodes=len(nodes), num_edges=len(edges),
+                           num_communities=len(set(communities.values())) if communities else 0)
+
+
+@app.route("/graph/path")
+@login_required
+def graph_path():
+    """Shortest path between two entities."""
+    a = request.args.get("from", type=int)
+    b = request.args.get("to", type=int)
+    if not a or not b:
+        flash("Choose two entities.", "error")
+        return redirect(url_for("graph"))
+    entities = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None)
+    ).scalars().all()
+    rels = db.session.execute(db.select(Relationship)).scalars().all()
+    G = nx.Graph()
+    for e in entities:
+        G.add_node(e.id)
+    for r in rels:
+        G.add_edge(r.from_id, r.to_id)
+    try:
+        path = nx.shortest_path(G, source=a, target=b)
+        path_data = []
+        for pid in path:
+            e = db.session.get(Entity, pid)
+            path_data.append({"id": pid, "name": e.name if e else "?"})
+        return render_template("graph_path.html",
+                               path=path_data, a=a, b=b)
+    except Exception as ex:
+        flash(f"No connection found between those entities.", "error")
+        return redirect(url_for("graph"))
+
+
+# ============================================================
+# WAVE 1 FEATURE — ENCRYPTED SEARCH
+# ============================================================
+@app.route("/deep-search")
+@login_required
+def deep_search():
+    """Search inside encrypted fields using keyword hash index."""
+    q = (request.args.get("q") or "").strip()
+    results = {"cases": [], "updates": [], "analyst_notes": [], "entities": []}
+    if q:
+        words = extract_keywords(q)
+        if not words:
+            return render_template("deep_search.html", q=q, results=results)
+
+        hashes = [keyword_hash(w) for w in words]
+
+        # find matching rows in the index
+        hits = db.session.execute(
+            db.select(SearchIndex).where(SearchIndex.kw_hash.in_(hashes))
+        ).scalars().all()
+
+        # group by source type + id, count matches
+        buckets = {}
+        for h in hits:
+            key = (h.source_type, h.source_id)
+            buckets.setdefault(key, 0)
+            buckets[key] += 1
+
+        # any source that matched ALL keywords gets a higher score, but we
+        # show partial matches too
+        min_words = 1 if len(words) == 1 else max(1, len(words) // 2)
+
+        sorted_buckets = sorted(buckets.items(), key=lambda x: x[1], reverse=True)
+
+        for (stype, sid), score in sorted_buckets:
+            if score < min_words:
+                continue
+            if stype == "case":
+                obj = db.session.get(Case, sid)
+                if obj and can_view_case(current_user, obj):
+                    results["cases"].append(obj)
+            elif stype == "update":
+                obj = db.session.get(Update, sid)
+                if obj and obj.case and can_view_case(current_user, obj.case):
+                    results["updates"].append(obj)
+            elif stype == "analyst_note":
+                obj = db.session.get(AnalystNote, sid)
+                if obj and current_user.role in (ROLE_TOP, ROLE_ANALYST):
+                    results["analyst_notes"].append(obj)
+            elif stype == "entity":
+                obj = db.session.get(Entity, sid)
+                if obj:
+                    results["entities"].append(obj)
+
+    return render_template("deep_search.html", q=q, results=results)
+
+
+@app.route("/deep-search/reindex", methods=["POST"])
+@login_required
+@require_role(ROLE_TOP)
+def deep_search_reindex():
+    """Rebuild the entire search index from scratch."""
+    SearchIndex.query.delete()
+    for c in db.session.execute(db.select(Case)).scalars().all():
+        index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
+    for u in db.session.execute(db.select(Update)).scalars().all():
+        index_text("update", u.id, u.body, case_id=u.case_id)
+    for n in db.session.execute(db.select(AnalystNote)).scalars().all():
+        index_text("analyst_note", n.id, f"{n.title} {n.body}", case_id=n.case_id)
+    for e in db.session.execute(db.select(Entity)).scalars().all():
+        index_text("entity", e.id, f"{e.name} {e.notes} {e.region}")
+    db.session.commit()
+    audit("search_reindex", "full rebuild", actor=current_user.username)
+    flash("Search index rebuilt.", "success")
+    return redirect(url_for("deep_search"))
+
+
+# ============================================================
+# RELATIONSHIPS (still here)
 # ============================================================
 @app.route("/who-knows-who", methods=["GET", "POST"])
 @login_required
@@ -1823,7 +2136,7 @@ def contact_delete(sid):
 
 
 # ============================================================
-# SEARCH + ACTIVITY
+# SEARCH (basic, kept) + ACTIVITY
 # ============================================================
 @app.route("/search")
 @login_required
@@ -1855,7 +2168,7 @@ def activity():
 
 
 # ============================================================
-# TIMED NOTES
+# TIMED NOTES / BRIEFING / MAP
 # ============================================================
 @app.route("/timed-notes", methods=["GET", "POST"])
 @login_required
@@ -1882,9 +2195,6 @@ def drop_delete(did):
     return redirect(url_for("drops"))
 
 
-# ============================================================
-# BRIEFING
-# ============================================================
 @app.route("/briefing")
 @login_required
 def briefing():
@@ -1897,9 +2207,6 @@ def briefing():
     return render_template("briefing.html", days=days, since=since, updates=updates)
 
 
-# ============================================================
-# MAP (still available, hidden from nav)
-# ============================================================
 @app.route("/map")
 @login_required
 def map_view():
@@ -1918,26 +2225,7 @@ def map_view():
 
 
 # ============================================================
-# TIMELINE VIZ
-# ============================================================
-@app.route("/cases/<int:cid>/timeline-viz")
-@login_required
-def timeline_viz(cid):
-    c = db.session.get(Case, cid) or abort(404)
-    if not can_view_case(current_user, c):
-        abort(403)
-    events = [{
-        "id": u.id, "when": u.happened_at.strftime("%Y-%m-%d %H:%M"),
-        "ts": u.happened_at.timestamp(), "body": (u.body or "")[:100],
-        "media": len(u.photos),
-        "photos": sum(1 for m in u.photos if m.kind == "photo"),
-        "voices": sum(1 for m in u.photos if m.kind == "voice"),
-    } for u in c.updates]
-    return render_template("timeline_viz.html", case=c, events=events)
-
-
-# ============================================================
-# BACKUPS — restored AES-256-GCM with header
+# BACKUPS / INTEGRITY / USERS
 # ============================================================
 @app.route("/backups")
 @login_required
@@ -1968,9 +2256,6 @@ def backup_create():
     return resp
 
 
-# ============================================================
-# INTEGRITY
-# ============================================================
 @app.route("/integrity")
 @login_required
 def integrity():
@@ -1986,9 +2271,6 @@ def integrity():
     return render_template("integrity.html", issues=issues)
 
 
-# ============================================================
-# USERS
-# ============================================================
 @app.route("/users", methods=["GET", "POST"])
 @login_required
 @require_role(ROLE_TOP)

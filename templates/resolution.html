@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Entity Resolution{% endblock %}
+{% block content %}
+<h1>◈ Entity Resolution</h1>
+<p class="dim">Possible duplicate people. Merge when they are the same person.</p>
+
+<section class="card">
+  <h2>Suggestions ({{ suggestions|length }})</h2>
+  {% if suggestions %}
+  <ul class="list">
+    {% for s in suggestions %}
+    <li class="person-card">
+      <div style="display:flex;justify-content:space-between;width:100%;gap:10px;flex-wrap:wrap;">
+        <div style="flex:1 1 40%;">
+          <b class="person-name">{{ s.a.name }}</b>
+          <div class="dim">{{ s.a.type }} · {{ s.a.region or '—' }}</div>
+        </div>
+        <div style="flex:0 0 auto;align-self:center;color:var(--amber);font-weight:700;">
+          {{ '%.0f'|format(s.similarity * 100) }}%
+        </div>
+        <div style="flex:1 1 40%;">
+          <b class="person-name">{{ s.b.name }}</b>
+          <div class="dim">{{ s.b.type }} · {{ s.b.region or '—' }}</div>
+        </div>
+      </div>
+      <div class="dim" style="width:100%;">Similar because: {{ s.reason }}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;width:100%;flex-wrap:wrap;">
+        <form method="POST" action="{{ url_for('resolution_merge') }}" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="keep_id" value="{{ s.a.id }}">
+          <input type="hidden" name="merge_id" value="{{ s.b.id }}">
+          <button class="primary small">Keep "{{ s.a.name }}" → merge other</button>
+        </form>
+        <form method="POST" action="{{ url_for('resolution_merge') }}" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="keep_id" value="{{ s.b.id }}">
+          <input type="hidden" name="merge_id" value="{{ s.a.id }}">
+          <button class="primary small">Keep "{{ s.b.name }}" → merge other</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dim">No duplicates detected.</p>
+  {% endif %}
+</section>
+{% endblock %}
