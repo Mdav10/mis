@@ -172,12 +172,14 @@ def unwrap_case_key(wrapped_b64):
 
 
 def case_encrypt(case, plaintext):
-    """Encrypt a string using the case's own key."""
+    """Encrypt a string using the case's own key.
+    Safe to call even if case is None — falls back to master field encryption."""
     if not plaintext:
         return ""
-    key = unwrap_case_key(case.case_key_wrapped)
+    if case is None:
+        return field_encrypt(plaintext)
+    key = unwrap_case_key(case.case_key_wrapped or "")
     if not key:
-        # No case key yet — fall back to master field encryption
         return field_encrypt(plaintext)
     try:
         nonce = secrets.token_bytes(12)
@@ -189,9 +191,12 @@ def case_encrypt(case, plaintext):
 
 
 def case_decrypt(case, stored):
-    """Decrypt a string using the case's own key."""
+    """Decrypt a string using the case's own key.
+    Safe to call even if case is None."""
     if not stored:
         return ""
+    if case is None:
+        return field_decrypt(stored)
     try:
         blob = base64.b64decode(stored, validate=True)
         if blob[:4] != b"CD01":
@@ -1583,6 +1588,7 @@ def quick_add():
     if not body and files:
         body = f"[{files[0][0].capitalize()} attached]"
     u = Update(case_id=case.id, happened_at=when, created_by=current_user.username)
+    u.case = case   # attach so case_encrypt has the case's key
     u.body = body
     db.session.add(u)
     db.session.flush()
@@ -1664,13 +1670,14 @@ def cases():
             threat_level=form.threat_level.data, due_date=form.due_date.data,
             assigned_agent_id=form.assigned_agent_id.data or None,
             created_by=current_user.username)
-        # Per-case key
+        # Generate the per-case key BEFORE setting any encrypted field
         ck = new_case_key()
         c.case_key_wrapped = wrap_case_key(ck)
         c.key_rotated_at = datetime.utcnow()
-        c.notes = form.notes.data or ""
         db.session.add(c)
         db.session.flush()
+        # Now safe to encrypt notes — case has a key
+        c.notes = form.notes.data or ""
         c.integrity_hash = compute_integrity(c)
         index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
         db.session.commit()
@@ -1885,6 +1892,7 @@ def analyst_add(cid):
     if form.validate_on_submit():
         n = AnalystNote(case_id=c.id, category=form.category.data,
                         title=form.title.data, created_by=current_user.username)
+        n.case = c
         n.body = form.body.data
         db.session.add(n)
         db.session.flush()
@@ -2140,6 +2148,7 @@ def case_entity_add(cid):
         db.session.flush()
         index_text("entity", e.id, f"{e.name}")
         link = CaseEntity(case_id=c.id, entity_id=e.id, role=role)
+        link.case = c
         link.note = note
         db.session.add(link)
         db.session.commit()
