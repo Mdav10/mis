@@ -3277,6 +3277,84 @@ def exports():
 
 
 # ============================================================
+# BACKUPS (Top Secret only)
+# ============================================================
+@app.route("/backups")
+@login_required
+@require_role(ROLE_TOP)
+def backups():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    rows = db.session.execute(db.select(Backup).order_by(Backup.created_at.desc())).scalars().all()
+    return render_template("backups.html", backups=rows)
+
+
+@app.route("/backups/create", methods=["POST"])
+@login_required
+@require_role(ROLE_TOP)
+def backup_create():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    password = (request.form.get("password") or "").strip()
+    if len(password) < 8:
+        flash("Backup password must be at least 8 characters.", "error")
+        return redirect(url_for("backups"))
+    blob, count = make_encrypted_backup(password)
+    fname = f"MIS_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.misbak"
+    db.session.add(Backup(filename=fname, size_bytes=len(blob),
+                          record_count=count, created_by=current_user.username))
+    db.session.commit()
+    audit("backup_create", fname, actor=current_user.username)
+    resp = send_file(io.BytesIO(blob), mimetype="application/octet-stream",
+                     as_attachment=True, download_name=fname)
+    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ============================================================
+# USERS (Top Secret only)
+# ============================================================
+@app.route("/users", methods=["GET", "POST"])
+@login_required
+@require_role(ROLE_TOP)
+def users():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    form = UserForm()
+    if form.validate_on_submit():
+        uname = form.username.data.strip()
+        if db.session.execute(db.select(User).filter_by(username=uname)).scalar():
+            flash("Username taken.", "error")
+        else:
+            u = User(username=uname, codename=form.codename.data or "",
+                     email=form.email.data or "", role=form.role.data)
+            u.set_password(form.password.data)
+            db.session.add(u)
+            db.session.commit()
+            audit("user_create", f"{uname} ({form.role.data})", actor=current_user.username)
+            flash("User created.", "success")
+            return redirect(url_for("users"))
+    rows = db.session.execute(db.select(User).order_by(User.created_at)).scalars().all()
+    return render_template("users.html", form=form, users=rows)
+
+
+@app.route("/users/<int:uid>/delete", methods=["POST"])
+@login_required
+@require_role(ROLE_TOP)
+def user_delete(uid):
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    if uid == current_user.id:
+        flash("Cannot delete yourself.", "error")
+        return redirect(url_for("users"))
+    u = db.session.get(User, uid) or abort(404)
+    db.session.delete(u)
+    db.session.commit()
+    return redirect(url_for("users"))
+
+
+# ============================================================
 # WAVE 4 — API KEYS
 # ============================================================
 @app.route("/settings/api-keys", methods=["GET", "POST"])
