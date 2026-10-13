@@ -2,11 +2,25 @@
 {% block title %}Login{% endblock %}
 {% block content %}
 <div class="login-wrap">
+
+  <!-- Small install pill top-right, hides itself when installed -->
+  <button id="mis-install-pill" onclick="window.misInstall()"
+          style="
+            display:none;
+            position:fixed;top:20px;right:20px;z-index:100;
+            padding:8px 14px;
+            background:transparent;color:#ffb000;
+            border:1px dashed #ffb000;border-radius:20px;
+            font-weight:700;font-size:10px;letter-spacing:1.5px;
+            cursor:pointer;text-transform:uppercase;font-family:monospace;
+          ">
+    📲 Install
+  </button>
+
   <div class="login-card">
     <h1>MIS</h1>
     <p class="subtitle">Mugisha's Intelligence System</p>
     <p class="clearance-warning">◆ ACCESS RESTRICTED ◆</p>
-
     <form method="POST" novalidate autocomplete="off">
       {{ form.hidden_tag() }}
       {{ form.username(placeholder="USERNAME", autocomplete="username",
@@ -15,22 +29,24 @@
       {{ form.password(placeholder="PASSPHRASE", autocomplete="current-password") }}
       {{ form.submit(class_="primary") }}
     </form>
-
-    <button onclick="window.misInstall()"
-            style="
-              margin-top:16px;width:100%;padding:12px;
-              background:transparent;color:#ffb000;
-              border:1px dashed #ffb000;border-radius:6px;
-              font-weight:700;font-size:11px;letter-spacing:2px;
-              cursor:pointer;text-transform:uppercase;
-              font-family:monospace;
-            ">
-      📲 Install MIS on this device
-    </button>
-    <p class="dim" style="margin-top:10px;font-size:10px;">
-      Adds MIS to your home screen · Opens full-screen · Works offline
-    </p>
   </div>
 </div>
+
+<script>
+  // Show the pill only when the app is NOT already installed
+  (function(){
+    var pill = document.getElementById('mis-install-pill');
+    if (!pill) return;
+    var standalone = window.matchMedia('(display-mode: standalone)').matches
+                     || window.navigator.standalone === true;
+    if (standalone) { pill.style.display = 'none'; return; }
+    // Show after a short delay — gives window.misInstall time to attach
+    setTimeout(function(){ pill.style.display = 'inline-block'; }, 400);
+    // Hide as soon as installed
+    window.addEventListener('appinstalled', function(){
+      pill.style.display = 'none';
+    });
+  })();
+</script>
 {% endblock %}
 {% block footer %}{% endblock %}

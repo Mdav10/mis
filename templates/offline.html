@@ -1,10 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Offline{% endblock %}
 {% block content %}
-<div style="text-align:center;padding:60px 20px;">
-  <h1 style="justify-content:center;">⚠ OFFLINE</h1>
-  <p class="dim">You're not connected to the network.</p>
-  <p class="dim">Cached pages still work. Anything requiring the server will fail until you're back online.</p>
-  <a href="{{ url_for('dashboard') }}" class="primary" style="text-decoration:none;display:inline-block;margin-top:20px;">Try Home</a>
+<div style="text-align:center;padding:80px 20px;">
+  <div style="font-size:60px;margin-bottom:16px;opacity:0.6;">⚠</div>
+  <h1 style="justify-content:center;">OFFLINE</h1>
+  <p class="dim" style="margin-top:16px;">No network connection.</p>
+  <p class="dim">MIS will resume where you left off when the connection returns.</p>
+  <button onclick="location.reload()" class="primary" style="margin-top:24px;">Retry Now</button>
 </div>
+
+<script>
+  // Watch for the network coming back — auto-reload to the last page
+  window.addEventListener('online', function () {
+    var last = sessionStorage.getItem('mis_last_url') || '/dashboard';
+    location.href = last;
+  });
+  // Poll every 5 seconds as a fallback (some browsers don't fire 'online')
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    if (navigator.onLine) {
+      clearInterval(timer);
+      var last = sessionStorage.getItem('mis_last_url') || '/dashboard';
+      location.href = last;
+    }
+    if (tries > 60) clearInterval(timer); // 5 minutes max
+  }, 5000);
+</script>
 {% endblock %}
