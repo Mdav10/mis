@@ -3,7 +3,6 @@
 {% block content %}
 <div class="login-wrap">
 
-  <!-- Small install pill top-right, hides itself when installed -->
   <button id="mis-install-pill" onclick="window.misInstall()"
           style="
             display:none;
@@ -21,30 +20,73 @@
     <h1>MIS</h1>
     <p class="subtitle">Mugisha's Intelligence System</p>
     <p class="clearance-warning">◆ ACCESS RESTRICTED ◆</p>
-    <form method="POST" novalidate autocomplete="off">
+
+    <form method="POST" novalidate autocomplete="off" id="loginForm">
       {{ form.hidden_tag() }}
       {{ form.username(placeholder="USERNAME", autocomplete="username",
                        autocapitalize="none", autocorrect="off",
                        spellcheck="false") }}
       {{ form.password(placeholder="PASSPHRASE", autocomplete="current-password") }}
-      {{ form.submit(class_="primary") }}
+      {{ form.submit(class_="primary", id="loginBtn") }}
     </form>
+
+    <div id="bootScreen" class="boot-screen" style="display:none"></div>
   </div>
 </div>
 
 <script>
-  // Show the pill only when the app is NOT already installed
+  // ----- Install pill -----
   (function(){
     var pill = document.getElementById('mis-install-pill');
     if (!pill) return;
     var standalone = window.matchMedia('(display-mode: standalone)').matches
                      || window.navigator.standalone === true;
     if (standalone) { pill.style.display = 'none'; return; }
-    // Show after a short delay — gives window.misInstall time to attach
     setTimeout(function(){ pill.style.display = 'inline-block'; }, 400);
-    // Hide as soon as installed
     window.addEventListener('appinstalled', function(){
       pill.style.display = 'none';
+    });
+  })();
+
+  // ----- Boot sequence -----
+  (function(){
+    var form = document.getElementById('loginForm');
+    var boot = document.getElementById('bootScreen');
+    var btn  = document.getElementById('loginBtn');
+    if (!form || !boot) return;
+
+    var LINES = [
+      '> AUTHENTICATING ...',
+      '> VERIFYING CLEARANCE ...',
+      '> SESSION ESTABLISHED',
+      '> DECRYPTING CASE FILES ...',
+      '> ACCESS GRANTED'
+    ];
+
+    form.addEventListener('submit', function (e) {
+      // Never double-fire
+      if (btn && btn.disabled) { e.preventDefault(); return; }
+
+      // Disable the button and start the boot screen
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'CONNECTING...';
+      }
+
+      boot.style.display = 'block';
+      boot.textContent = '';
+
+      var i = 0;
+      var iv = setInterval(function () {
+        if (i >= LINES.length) {
+          clearInterval(iv);
+          // Let the native form submit proceed
+          form.submit();
+          return;
+        }
+        boot.textContent += LINES[i] + '\n';
+        i++;
+      }, 260);
     });
   })();
 </script>
