@@ -544,3 +544,17 @@ a.is-spinning-link .btn-spinner {
 .role-banner.role-analyst b { color: #3fb950; }
 .role-banner.role-agent { border-left-color: #58a6ff; }
 .role-banner.role-agent b { color: #58a6ff; }
+
+/* Wave 2 — voice transcript */
+.voice-transcript {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #000;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 4px;
+  font-style: italic;
+  color: var(--text);
+  font-size: 13px;
+  white-space: pre-wrap;
+}

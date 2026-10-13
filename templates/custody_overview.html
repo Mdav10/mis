@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Custody Log{% endblock %}
+{% block content %}
+<h1>⛓ Global Custody Log</h1>
+
+<section class="card">
+  <h2>Recent entries ({{ entries|length }})</h2>
+  <ul class="timeline">
+    {% for e in entries %}
+    <li>
+      <span class="dim">{{ e.created_at.strftime('%d %b %Y · %H:%M:%S') }}</span>
+      <a href="{{ url_for('case_custody', cid=e.case_id) }}" style="color:var(--amber)">Case #{{ e.case_id }}</a>
+      <b>{{ e.action }}</b>
+      <span>{{ e.detail or '' }}</span>
+      <span class="dim">— {{ e.actor }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

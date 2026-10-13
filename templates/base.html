@@ -56,6 +56,9 @@
       <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
       <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
       <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity</a>
+      {% if current_user.role in ['top_secret','analyst'] %}
+      <a href="{{ url_for('custody_overview') }}" class="menu-link">⛓ Custody Log</a>
+      {% endif %}
       {% if current_user.role == 'top_secret' %}
       <a href="{{ url_for('users') }}" class="menu-link">👥 Users</a>
       <a href="{{ url_for('backups') }}" class="menu-link">💾 Backups</a>

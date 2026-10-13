@@ -5,16 +5,23 @@
 <h1>{{ case.title }}</h1>
 {% if case.subject %}<p class="subtitle-line dim">Subject: {{ case.subject }}</p>{% endif %}
 <p class="dim">
-  {% if case.assigned_agent %}
-    Assigned Agent: <b style="color:var(--amber)">{{ case.assigned_agent.username }}</b>
-  {% else %}
-    <span class="badge warn">UNASSIGNED</span>
-  {% endif %}
+  {% if case.assigned_agent %}Assigned Agent: <b style="color:var(--amber)">{{ case.assigned_agent.username }}</b>{% else %}<span class="badge warn">UNASSIGNED</span>{% endif %}
 </p>
+
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+  <a href="{{ url_for('case_custody', cid=case.id) }}" class="primary" style="text-decoration:none;">⛓ Chain of Custody</a>
+  {% if current_user.role == 'top_secret' %}
+  <form method="POST" action="{{ url_for('case_rotate_key', cid=case.id) }}"
+        onsubmit="return confirm('Rotate this case\'s encryption key? All data will be re-encrypted.');"
+        style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="danger-btn">🔑 Rotate Key</button>
+  </form>
+  {% endif %}
+</div>
 
 {% set is_assigned_agent = (current_user.role == 'agent' and case.assigned_agent_id == current_user.id) %}
 
-{# ============ ONLY ASSIGNED AGENT CAN WRITE ============ #}
 {% if is_assigned_agent %}
 <section class="card quick-add">
   <h2>◆ Log Entry for This Case</h2>
@@ -34,6 +41,7 @@
     </div>
     <button class="primary big">◆ Save Entry</button>
   </form>
+  <p class="dim" style="margin-top:8px;">Voice memos get transcribed automatically on save.</p>
 </section>
 {% endif %}
 
@@ -59,6 +67,17 @@
             <div class="voice-block">
               <span class="dim">🎙 Voice memo</span>
               <audio controls preload="none" src="{{ url_for('media_view', mid=m.id) }}"></audio>
+              {% if m.transcript %}
+                <div class="voice-transcript">
+                  <b style="color:var(--amber)">Transcript:</b>
+                  {{ m.transcript }}
+                </div>
+              {% else %}
+                <form method="POST" action="{{ url_for('media_transcribe', mid=m.id) }}" style="margin-top:6px;">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="link-btn">Transcribe now</button>
+                </form>
+              {% endif %}
             </div>
           {% endif %}
         {% endfor %}
@@ -80,7 +99,6 @@
   {% else %}<p class="dim">No entries yet.</p>{% endif %}
 </section>
 
-{# ============ ANALYST NOTES (Top Secret + Analyst) ============ #}
 {% if current_user.role in ['top_secret', 'analyst'] %}
 <section class="card highlight">
   <h2>▣ Analyst Workspace</h2>
@@ -137,7 +155,6 @@
 </section>
 {% endif %}
 
-{# ============ PEOPLE ============ #}
 <section class="card">
   <h2>◍ People on this Case</h2>
   {% if case.links %}
@@ -196,7 +213,6 @@
   {% endif %}
 </section>
 
-{# ============ CASE META (Top Secret only) ============ #}
 {% if current_user.role == 'top_secret' %}
 <section class="card">
   <h2>⚙ Case Settings</h2>
@@ -217,9 +233,9 @@
 </section>
 {% endif %}
 
-{# ============ PDF EXPORT ============ #}
 <section class="card highlight">
   <h2>🔐 Encrypted PDF Export</h2>
+  <p class="dim">Includes chain of custody as an appendix.</p>
   <form method="POST" action="{{ url_for('case_report', cid=case.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>PDF password (min 6 chars)</label>

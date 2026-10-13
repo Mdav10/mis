@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Chain of Custody{% endblock %}
+{% block content %}
+<h1>⛓ Chain of Custody — {{ case.title }}</h1>
+
+<section class="card">
+  <h2>Chain Status</h2>
+  {% if chain_ok %}
+    <p style="color:var(--green)"><b>✓ Chain intact.</b> Every entry's hash matches the previous one.</p>
+  {% else %}
+    <p style="color:var(--red)"><b>⚠ Chain broken at entry #{{ broken_at }}.</b> Something was modified after that point.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Record a New Entry</h2>
+  <form method="POST" action="{{ url_for('case_custody_add', cid=case.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Action</label>
+    <select name="action">
+      <option value="HANDOVER">Handover</option>
+      <option value="VIEW">Viewed by</option>
+      <option value="EDIT">Edited</option>
+      <option value="DOWNLOAD">Downloaded</option>
+      <option value="EXPORT">Exported</option>
+    </select>
+    <label>Note</label>
+    <textarea name="detail" rows="2" placeholder="e.g. Handed to Officer Okello, ref #458"></textarea>
+    <button class="primary">Record</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Entries ({{ entries|length }})</h2>
+  {% if entries %}
+  <ul class="timeline">
+    {% for e in entries %}
+    <li>
+      <span class="dim">{{ e.created_at.strftime('%d %b %Y · %H:%M:%S') }}</span>
+      <b style="color:var(--amber)">{{ e.action }}</b>
+      <span>{{ e.detail }}</span>
+      <span class="dim">— {{ e.actor }} ({{ e.actor_role }}) from {{ e.ip or '—' }}</span>
+      <div class="dim" style="font-size:10px;word-break:break-all;">hash: {{ e.entry_hash[:32] }}…</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dim">No custody entries yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
