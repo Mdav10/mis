@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Shortest Path{% endblock %}
+{% block content %}
+<h1>◈ Connection Path</h1>
+
+<section class="card">
+  <h2>{{ path|length }} steps</h2>
+  <ul class="list">
+    {% for p in path %}
+    <li>
+      <a href="{{ url_for('entity_detail', eid=p.id) }}"><b class="person-name">{{ p.name }}</b></a>
+      {% if not loop.last %}<span class="dim">↓ connected to</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <a href="{{ url_for('graph') }}" class="dim">← back to graph</a>
+</section>
+{% endblock %}

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Link Graph{% endblock %}
+{% block head %}
+<style>
+  #graph-wrap { background:#000; border:1px solid var(--border); border-radius:4px; padding:8px; }
+  #graph-svg { display:block; width:100%; height:auto; }
+  .node-label { fill: var(--text); font-size: 10px; font-family: var(--mono); pointer-events:none; }
+  .legend {
+    display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;
+    font-size:11px; color:var(--text-dim);
+  }
+  .legend span.dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>◈ Link Graph</h1>
+
+<section class="card">
+  <h2>Statistics</h2>
+  <div class="stat-strip" style="grid-template-columns:repeat(3,1fr);">
+    <div class="stat"><span class="num">{{ num_nodes }}</span><span class="lbl">Entities</span></div>
+    <div class="stat"><span class="num">{{ num_edges }}</span><span class="lbl">Links</span></div>
+    <div class="stat"><span class="num">{{ num_communities }}</span><span class="lbl">Clusters</span></div>
+  </div>
+</section>
+
+{% if num_nodes == 0 %}
+<section class="card"><p class="dim">No entities or relationships yet.</p></section>
+{% else %}
+<section class="card">
+  <h2>Network</h2>
+  <div id="graph-wrap">
+    <svg id="graph-svg" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:#3fb950"></span>Low threat</span>
+    <span><span class="dot" style="background:#ffb000"></span>Medium</span>
+    <span><span class="dot" style="background:#ff7b00"></span>High</span>
+    <span><span class="dot" style="background:#ff3b30"></span>Critical</span>
+    <span>· Node size = number of connections</span>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Most Connected</h2>
+  <ul class="list">
+    {% for n in top %}
+    <li>
+      <a href="{{ url_for('entity_detail', eid=n.id) }}" class="case-link"><b>{{ n.name }}</b></a>
+      <span class="badge">{{ n.degree }} connections</span>
+      <span class="badge classified">Cluster {{ n.community }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<script>
+(function(){
+  const nodes = {{ nodes|tojson }};
+  const edges = {{ edges|tojson }};
+  const svg = document.getElementById('graph-svg');
+  const W = 800, H = 600;
+
+  const threatColor = {LOW:'#3fb950', MEDIUM:'#ffb000', HIGH:'#ff7b00', CRITICAL:'#ff3b30'};
+  const clusterColors = ['#ffb000','#58a6ff','#3fb950','#ff7b00','#bc8cff','#ff3b30','#79c0ff','#f778ba'];
+
+  const positions = {};
+  const velocity = {};
+
+  nodes.forEach((n, i) => {
+    const angle = (i / nodes.length) * Math.PI * 2;
+    positions[n.id] = { x: W/2 + 200 * Math.cos(angle), y: H/2 + 200 * Math.sin(angle) };
+    velocity[n.id] = { x: 0, y: 0 };
+  });
+
+  function step() {
+    nodes.forEach(a => {
+      nodes.forEach(b => {
+        if (a.id === b.id) return;
+        const dx = positions[a.id].x - positions[b.id].x;
+        const dy = positions[a.id].y - positions[b.id].y;
+        const d2 = dx*dx + dy*dy + 1;
+        const force = 4000 / d2;
+        const d = Math.sqrt(d2);
+        velocity[a.id].x += (dx/d) * force * 0.05;
+        velocity[a.id].y += (dy/d) * force * 0.05;
+      });
+    });
+    edges.forEach(e => {
+      const dx = positions[e.target].x - positions[e.source].x;
+      const dy = positions[e.target].y - positions[e.source].y;
+      const d = Math.sqrt(dx*dx + dy*dy) + 1;
+      const force = (d - 90) * 0.02;
+      velocity[e.source].x += (dx/d) * force;
+      velocity[e.source].y += (dy/d) * force;
+      velocity[e.target].x -= (dx/d) * force;
+      velocity[e.target].y -= (dy/d) * force;
+    });
+    nodes.forEach(n => {
+      velocity[n.id].x += (W/2 - positions[n.id].x) * 0.001;
+      velocity[n.id].y += (H/2 - positions[n.id].y) * 0.001;
+      positions[n.id].x += velocity[n.id].x;
+      positions[n.id].y += velocity[n.id].y;
+      velocity[n.id].x *= 0.85;
+      velocity[n.id].y *= 0.85;
+      positions[n.id].x = Math.max(30, Math.min(W-30, positions[n.id].x));
+      positions[n.id].y = Math.max(30, Math.min(H-30, positions[n.id].y));
+    });
+  }
+
+  for (let i = 0; i < 300; i++) step();
+
+  edges.forEach(e => {
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', positions[e.source].x);
+    line.setAttribute('y1', positions[e.source].y);
+    line.setAttribute('x2', positions[e.target].x);
+    line.setAttribute('y2', positions[e.target].y);
+    line.setAttribute('stroke', '#3a3a33');
+    line.setAttribute('stroke-width', Math.min(1 + e.weight * 0.5, 3));
+    svg.appendChild(line);
+  });
+
+  nodes.forEach(n => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', positions[n.id].x);
+    c.setAttribute('cy', positions[n.id].y);
+    const r = Math.min(6 + n.degree * 2, 20);
+    c.setAttribute('r', r);
+    c.setAttribute('fill', threatColor[n.threat] || '#8a8577');
+    c.setAttribute('fill-opacity', '0.85');
+    c.setAttribute('stroke', clusterColors[n.community % clusterColors.length]);
+    c.setAttribute('stroke-width', '2');
+    c.style.cursor = 'pointer';
+    c.onclick = () => location.href = '/entities/' + n.id;
+    const t = document.createElementNS('http://www.w3.org/2000/svg','title');
+    t.textContent = n.name + ' (' + n.type + ') · ' + n.degree + ' connections';
+    c.appendChild(t);
+    svg.appendChild(c);
+
+    if (n.degree >= 2 || nodes.length <= 15) {
+      const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+      label.setAttribute('x', positions[n.id].x);
+      label.setAttribute('y', positions[n.id].y + r + 12);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('class', 'node-label');
+      label.textContent = n.name.length > 14 ? n.name.slice(0, 12) + '…' : n.name;
+      svg.appendChild(label);
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
