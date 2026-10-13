@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+
+<h1>Welcome back</h1>
+
+<section class="card">
+  <h2>Your Lists</h2>
+  <ul class="list">
+    {% for c in fake_cases %}
+    <li>
+      <b>{{ c.title }}</b>
+      <span class="dim">— {{ c.subject }}</span>
+      <span class="badge">3 items</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Recent</h2>
+  <ul class="list">
+    <li>Nothing new today</li>
+    <li>Remember to buy milk</li>
+    <li>Meeting moved to 3pm</li>
+  </ul>
+</section>
+{% endblock %}

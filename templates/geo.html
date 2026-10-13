@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Geo Analysis{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  #geo-map { height: 55vh; min-height: 380px; border: 1px solid var(--border); background: #000; border-radius: 4px; }
+  .leaflet-container { background: #000 !important; }
+  .leaflet-tile { filter: brightness(0.6) contrast(1.3) hue-rotate(160deg); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--amber-dim); border-radius: 4px; font-family: var(--mono);
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>◌ Geospatial Analysis</h1>
+
+<section class="card">
+  <h2>Summary</h2>
+  <div class="stat-strip" style="grid-template-columns:repeat(2,1fr);">
+    <div class="stat"><span class="num">{{ total_located }}</span><span class="lbl">Located</span></div>
+    <div class="stat"><span class="num">{{ co_located|length }}</span><span class="lbl">Co-located groups</span></div>
+  </div>
+</section>
+
+{% if markers %}
+<section class="card">
+  <h2>Map</h2>
+  <div id="geo-map"></div>
+</section>
+{% else %}
+<section class="card"><p class="dim">No entities with coordinates yet.</p></section>
+{% endif %}
+
+{% if co_located %}
+<section class="card">
+  <h2>◍ Co-location groups (same region)</h2>
+  <ul class="list">
+    {% for g in co_located %}
+    <li>
+      <b style="color:var(--amber)">{{ g.region }}</b>
+      <div style="width:100%;margin-top:6px;">
+        {% for e in g.entities %}
+          <a href="{{ url_for('entity_detail', eid=e.id) }}" class="case-tag">{{ e.name }} ({{ e.type }})</a>
+        {% endfor %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if nearby_pairs %}
+<section class="card">
+  <h2>◈ Nearby pairs (within ~0.5°)</h2>
+  <ul class="list">
+    {% for p in nearby_pairs %}
+    <li>
+      <a href="{{ url_for('entity_detail', eid=p.a.id) }}"><b class="person-name">{{ p.a.name }}</b></a>
+      <span class="badge">↔</span>
+      <a href="{{ url_for('entity_detail', eid=p.b.id) }}"><b class="person-name">{{ p.b.name }}</b></a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if region_counts %}
+<section class="card">
+  <h2>◍ Top regions by entity count</h2>
+  <ul class="list">
+    {% for region, count in region_counts %}
+    <li>
+      <b style="flex:1">{{ region }}</b>
+      <span class="badge">{{ count }} entities</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  const markers = {{ markers|tojson }};
+  if (!markers.length) return;
+  const map = L.map('geo-map', { worldCopyJump: true, backgroundColor: '#000' })
+    .setView([15, 25], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap · © CARTO', subdomains: 'abcd'
+  }).addTo(map);
+  markers.forEach(m => {
+    L.circleMarker([m.lat, m.lng], {
+      radius: 8, color: m.color, fillColor: m.color, fillOpacity: 0.75, weight: 2
+    }).addTo(map).bindPopup(
+      `<b style="color:${m.color}">${m.name}</b><br>
+       <span style="color:#8a8577">${m.type} · ${m.threat}</span><br>
+       <span style="color:#5a564c">◍ ${m.region || '—'}</span><br>
+       <a href="/entities/${m.id}" style="color:#ffb000">Open profile →</a>`
+    );
+  });
+})();
+</script>
+{% endblock %}

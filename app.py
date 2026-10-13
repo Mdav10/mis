@@ -1,11 +1,12 @@
 # ============================================================
-# MIS v17 — Wave 2: Chain of Custody + Per-Case Keys + Transcription
-# Base: v16 (Wave 1 working)
+# MIS v18 — Wave 3: Pattern Detection + Geospatial + Duress Mode
+# Base: v17 (Wave 2 working)
 # ============================================================
 
 import os, io, json, hmac, hashlib, secrets, base64, re, subprocess, tempfile, threading
 from datetime import datetime, timedelta
 from functools import wraps
+from collections import Counter, defaultdict
 
 from flask import (
     Flask, render_template, redirect, url_for, request,
@@ -42,8 +43,6 @@ from pypdf import PdfReader, PdfWriter
 import pyotp
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
 
 load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -54,16 +53,12 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 # ============================================================
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
-
-    _db = os.getenv(
-        "DATABASE_URL",
-        f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}"
-    )
+    _db = os.getenv("DATABASE_URL",
+                    f"sqlite:///{os.path.join(BASE_DIR, 'instance', 'mis.db')}")
     if _db.startswith("postgres://"):
         _db = _db.replace("postgres://", "postgresql://", 1)
     if _db.startswith("postgresql://") and "+psycopg" not in _db:
         _db = _db.replace("postgresql://", "postgresql+psycopg2://", 1)
-
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
@@ -95,7 +90,7 @@ login_manager.login_message = "Please log in."
 
 
 # ============================================================
-# CRYPTO — MASTER KEY + PER-CASE KEYS
+# CRYPTO
 # ============================================================
 MASTER_KEY_ENV = os.getenv("MASTER_KEY", "")
 
@@ -137,14 +132,11 @@ def field_decrypt(stored):
         return stored
 
 
-# ---- Per-case key management ----
 def new_case_key():
-    """Generate a fresh 32-byte AES key for a case."""
     return secrets.token_bytes(32)
 
 
 def wrap_case_key(case_key):
-    """Wrap (encrypt) a case key with the master key. Returns base64."""
     try:
         nonce = secrets.token_bytes(12)
         ct = AESGCM(get_master_key()).encrypt(nonce, case_key,
@@ -156,7 +148,6 @@ def wrap_case_key(case_key):
 
 
 def unwrap_case_key(wrapped_b64):
-    """Unwrap the case key. Returns 32 bytes or None."""
     if not wrapped_b64:
         return None
     try:
@@ -172,8 +163,6 @@ def unwrap_case_key(wrapped_b64):
 
 
 def case_encrypt(case, plaintext):
-    """Encrypt a string using the case's own key.
-    Safe to call even if case is None — falls back to master field encryption."""
     if not plaintext:
         return ""
     if case is None:
@@ -191,8 +180,6 @@ def case_encrypt(case, plaintext):
 
 
 def case_decrypt(case, stored):
-    """Decrypt a string using the case's own key.
-    Safe to call even if case is None."""
     if not stored:
         return ""
     if case is None:
@@ -200,7 +187,6 @@ def case_decrypt(case, stored):
     try:
         blob = base64.b64decode(stored, validate=True)
         if blob[:4] != b"CD01":
-            # fallback to master field decryption
             return field_decrypt(stored)
         key = unwrap_case_key(case.case_key_wrapped)
         if not key:
@@ -257,6 +243,87 @@ def index_text(source_type, source_id, plain_text, case_id=None):
 
 
 # ============================================================
+# BACKGROUND TRANSCRIPTION
+# ============================================================
+def _bg_transcribe(app_ctx, media_id, case_id):
+    with app_ctx:
+        try:
+            m = db.session.get(UpdateMedia, media_id)
+            if not m or m.transcript:
+                return
+            if not m.data or len(m.data) < 100:
+                m.transcript = "[empty or too short]"
+                m.transcribed_at = datetime.utcnow()
+                db.session.commit()
+                return
+            txt = transcribe_audio(m.data, m.mimetype or "audio/webm")
+            m.transcript = txt or "[transcription failed]"
+            m.transcribed_at = datetime.utcnow()
+            db.session.commit()
+            if txt:
+                index_text("voice", m.id, txt, case_id=case_id)
+                db.session.commit()
+        except Exception as e:
+            print(f"⚠️  background transcription failed: {e}")
+
+
+def spawn_transcription(media_id, case_id):
+    try:
+        ctx = app.app_context()
+        t = threading.Thread(target=_bg_transcribe, args=(ctx, media_id, case_id), daemon=True)
+        t.start()
+    except Exception as e:
+        print(f"⚠️  could not spawn transcription: {e}")
+
+
+def transcribe_audio(audio_bytes, mime_hint="audio/webm"):
+    tmp_in = None
+    tmp_wav = None
+    try:
+        ext = ".webm"
+        if "wav" in mime_hint:
+            ext = ".wav"
+        elif "mpeg" in mime_hint or "mp3" in mime_hint:
+            ext = ".mp3"
+        elif "ogg" in mime_hint:
+            ext = ".ogg"
+        elif "mp4" in mime_hint or "m4a" in mime_hint:
+            ext = ".m4a"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            f.write(audio_bytes)
+            tmp_in = f.name
+        tmp_wav = tmp_in + ".wav"
+        try:
+            from pydub import AudioSegment
+            seg = AudioSegment.from_file(tmp_in)
+            seg.export(tmp_wav, format="wav")
+        except Exception as e:
+            print(f"⚠️  pydub convert failed: {e}")
+            tmp_wav = tmp_in
+        import speech_recognition as sr
+        r = sr.Recognizer()
+        with sr.AudioFile(tmp_wav) as source:
+            audio_data = r.record(source)
+        try:
+            return r.recognize_google(audio_data) or ""
+        except sr.UnknownValueError:
+            return "[transcript unavailable — audio not clear]"
+        except sr.RequestError as e:
+            print(f"⚠️  SR request error: {e}")
+            return "[transcript service unavailable]"
+    except Exception as e:
+        print(f"⚠️  transcribe_audio failed: {e}")
+        return ""
+    finally:
+        for p in (tmp_in, tmp_wav):
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+
+
+# ============================================================
 # ROLES
 # ============================================================
 ROLE_TOP = "top_secret"
@@ -288,13 +355,32 @@ class User(UserMixin, db.Model):
     last_ip = db.Column(db.String(64), default="")
     failed_attempts = db.Column(db.Integer, default=0)
     locked_until = db.Column(db.DateTime, nullable=True)
+    # ---- Wave 3: Duress ----
+    duress_hash = db.Column(db.String(255), default="")   # second password
+    duress_contact = db.Column(db.String(200), default="")  # email to notify
+    duress_triggered_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, raw):
         self.password_hash = generate_password_hash(raw, method="pbkdf2:sha256", salt_length=16)
 
+    def set_duress(self, raw):
+        if not raw:
+            self.duress_hash = ""
+        else:
+            self.duress_hash = generate_password_hash(raw, method="pbkdf2:sha256", salt_length=16)
+
     def check_password(self, raw):
         h = (self.password_hash or "").strip()
+        if not h or ":" not in h:
+            return False
+        try:
+            return check_password_hash(h, raw)
+        except Exception:
+            return False
+
+    def check_duress(self, raw):
+        h = (self.duress_hash or "").strip()
         if not h or ":" not in h:
             return False
         try:
@@ -357,6 +443,7 @@ class SessionRecord(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     revoked = db.Column(db.Boolean, default=False)
+    is_duress = db.Column(db.Boolean, default=False)
 
 
 class Case(db.Model):
@@ -371,7 +458,7 @@ class Case(db.Model):
     due_date = db.Column(db.DateTime, nullable=True)
     assigned_agent_id = db.Column(db.Integer, nullable=True)
     integrity_hash = db.Column(db.String(64), default="")
-    case_key_wrapped = db.Column(db.Text, default="")     # per-case AES key, wrapped by master
+    case_key_wrapped = db.Column(db.Text, default="")
     key_rotated_at = db.Column(db.DateTime, nullable=True)
     created_by = db.Column(db.String(80), default="system")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -452,7 +539,7 @@ class UpdateMedia(db.Model):
     mimetype = db.Column(db.String(120), default="application/octet-stream")
     data = db.Column(db.LargeBinary)
     sha256 = db.Column(db.String(64))
-    transcript = db.Column(db.Text, default="")  # voice memo transcript
+    transcript = db.Column(db.Text, default="")
     transcribed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -580,46 +667,35 @@ class SearchIndex(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-# ---------- Wave 2: Chain of Custody ----------
 class CustodyLog(db.Model):
-    """Immutable chain of custody — every access to a case is logged."""
     __tablename__ = "mis_custody_log"
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.Integer, index=True, nullable=False)
-    action = db.Column(db.String(60), index=True)  # VIEW, EDIT, DOWNLOAD, EXPORT, DELETE, KEY_ROTATE
+    action = db.Column(db.String(60), index=True)
     detail = db.Column(db.Text)
     actor = db.Column(db.String(80), index=True)
     actor_role = db.Column(db.String(20))
     ip = db.Column(db.String(64))
     user_agent = db.Column(db.String(300))
-    # cryptographic chaining
     prev_hash = db.Column(db.String(64), index=True)
     entry_hash = db.Column(db.String(64), index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 
 def custody(case_id, action, detail=""):
-    """Append a new chain-of-custody entry."""
     try:
-        # Get the last entry for this case
         last = db.session.execute(
             db.select(CustodyLog).where(CustodyLog.case_id == case_id)
             .order_by(CustodyLog.id.desc()).limit(1)
         ).scalar()
         prev_hash = last.entry_hash if last else ("0" * 64)
-
         actor = current_user.username if current_user.is_authenticated else "system"
         actor_role = current_user.role if current_user.is_authenticated else "system"
         ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")[:60]
         ua = (request.headers.get("User-Agent", "") or "")[:280]
-
-        # Build the hash payload
-        payload = "|".join([
-            str(case_id), action, detail or "",
-            actor, actor_role, ip, prev_hash
-        ])
+        payload = "|".join([str(case_id), action, detail or "",
+                            actor, actor_role, ip, prev_hash])
         entry_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
         entry = CustodyLog(
             case_id=case_id, action=action, detail=detail,
             actor=actor, actor_role=actor_role, ip=ip, user_agent=ua,
@@ -660,6 +736,12 @@ MIGRATIONS = {
         ("last_ip", "VARCHAR(64) DEFAULT ''"),
         ("failed_attempts", "INTEGER DEFAULT 0"),
         ("locked_until", "TIMESTAMP"),
+        ("duress_hash", "VARCHAR(255) DEFAULT ''"),
+        ("duress_contact", "VARCHAR(200) DEFAULT ''"),
+        ("duress_triggered_at", "TIMESTAMP"),
+    ],
+    "mis_sessions": [
+        ("is_duress", "BOOLEAN DEFAULT FALSE"),
     ],
     "mis_cases": [
         ("subject", "VARCHAR(200) DEFAULT ''"),
@@ -724,105 +806,6 @@ def compute_integrity(obj, extra=""):
             parts.append(str(getattr(obj, col) or ""))
     parts.append(extra)
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
-
-
-# ============================================================
-# VOICE TRANSCRIPTION
-# ============================================================
-def transcribe_audio(audio_bytes, mime_hint="audio/webm"):
-    """Best-effort local transcription using SpeechRecognition + Google free API.
-    Falls back to empty string if it fails."""
-    tmp_in = None
-    tmp_wav = None
-    try:
-        # Write audio to a temp file
-        ext = ".webm"
-        if "wav" in mime_hint:
-            ext = ".wav"
-        elif "mpeg" in mime_hint or "mp3" in mime_hint:
-            ext = ".mp3"
-        elif "ogg" in mime_hint:
-            ext = ".ogg"
-        elif "mp4" in mime_hint or "m4a" in mime_hint:
-            ext = ".m4a"
-
-        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
-            f.write(audio_bytes)
-            tmp_in = f.name
-
-        # Convert to wav using pydub (needs ffmpeg)
-        tmp_wav = tmp_in + ".wav"
-        try:
-            from pydub import AudioSegment
-            seg = AudioSegment.from_file(tmp_in)
-            seg.export(tmp_wav, format="wav")
-        except Exception as e:
-            print(f"⚠️  pydub convert failed: {e}")
-            tmp_wav = tmp_in  # try with original
-
-        # Run speech recognition
-        import speech_recognition as sr
-        r = sr.Recognizer()
-        with sr.AudioFile(tmp_wav) as source:
-            audio_data = r.record(source)
-        try:
-            text = r.recognize_google(audio_data)
-            return text or ""
-        except sr.UnknownValueError:
-            return "[transcript unavailable — audio not clear]"
-        except sr.RequestError as e:
-            print(f"⚠️  SR request error: {e}")
-            return "[transcript service unavailable]"
-    except Exception as e:
-        print(f"⚠️  transcribe_audio failed: {e}")
-        return ""
-    finally:
-        for p in (tmp_in, tmp_wav):
-            try:
-                if p and os.path.exists(p):
-                    os.remove(p)
-            except Exception:
-                pass
-
-
-
-
-# ============================================================
-# BACKGROUND TRANSCRIPTION
-# ============================================================
-def _bg_transcribe(app_ctx, media_id, case_id):
-    """Run transcription in a background thread with its own app context."""
-    with app_ctx:
-        try:
-            from app import db as _db, UpdateMedia as _UM
-            m = _db.session.get(_UM, media_id)
-            if not m or m.transcript:
-                return
-            if not m.data or len(m.data) < 100:
-                # Too small — probably empty
-                m.transcript = "[empty or too short]"
-                m.transcribed_at = datetime.utcnow()
-                _db.session.commit()
-                return
-            txt = transcribe_audio(m.data, m.mimetype or "audio/webm")
-            m.transcript = txt or "[transcription failed]"
-            m.transcribed_at = datetime.utcnow()
-            _db.session.commit()
-            if txt:
-                index_text("voice", m.id, txt, case_id=case_id)
-                _db.session.commit()
-        except Exception as e:
-            print(f"⚠️  background transcription failed: {e}")
-
-
-def spawn_transcription(media_id, case_id):
-    """Fire and forget — transcription never blocks the request."""
-    try:
-        ctx = app.app_context()
-        t = threading.Thread(target=_bg_transcribe, args=(ctx, media_id, case_id), daemon=True)
-        t.start()
-    except Exception as e:
-        print(f"⚠️  could not spawn transcription: {e}")
 
 
 # ============================================================
@@ -1055,14 +1038,11 @@ class AnalystNoteForm(FlaskForm):
     submit = SubmitField("Save Analysis")
 
 
-class CustodyForm(FlaskForm):
-    action = SelectField("Action", choices=[
-        ("VIEW", "VIEW"), ("EDIT", "EDIT"), ("DOWNLOAD", "DOWNLOAD"),
-        ("EXPORT", "EXPORT"), ("KEY_ROTATE", "KEY_ROTATE"),
-        ("HANDOVER", "HANDOVER"),
-    ])
-    detail = TextAreaField("Note")
-    submit = SubmitField("Record")
+class DuressForm(FlaskForm):
+    duress_password = PasswordField("Duress password (leave blank to disable)")
+    duress_contact = StringField("Alert email (optional)", validators=[Optional(), Length(0, 200)])
+    current_password = PasswordField("Your current password", validators=[DataRequired()])
+    submit = SubmitField("Update Duress Settings")
 
 
 # ============================================================
@@ -1264,11 +1244,6 @@ def build_pdf(case, template="full", include_custody=False):
                 ("FONTSIZE", (0, 0), (-1, -1), 7),
             ]))
             story.append(t)
-            story.append(Spacer(1, 0.3 * cm))
-            story.append(Paragraph(
-                "Every entry above is cryptographically chained: each row's "
-                "hash includes the previous row's hash. Any modification would "
-                "break the chain from that point forward.", meta))
         else:
             story.append(Paragraph("— no custody entries yet —", body))
 
@@ -1367,7 +1342,7 @@ def make_encrypted_backup(password):
 
 
 # ============================================================
-# ROUTES — AUTH
+# ROUTES — AUTH (with duress detection)
 # ============================================================
 @app.route("/", methods=["GET", "POST"])
 def login():
@@ -1376,45 +1351,69 @@ def login():
     form = LoginForm()
     if form.validate_on_submit():
         uname = (form.username.data or "").strip()
+        pwd = form.password.data or ""
         user = db.session.execute(db.select(User).filter_by(username=uname)).scalar()
         ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+
         if user and user.locked_until and user.locked_until > datetime.utcnow():
             flash(f"Account locked until {user.locked_until.strftime('%H:%M')}.", "error")
             return render_template("login.html", form=form)
-        if user and user.check_password(form.password.data):
+
+        # --- Check real password first ---
+        is_real = user and user.check_password(pwd)
+        is_duress = (not is_real) and user and user.duress_hash and user.check_duress(pwd)
+
+        if is_real:
             user.failed_attempts = 0
             user.locked_until = None
             user.last_ip = ip
             db.session.commit()
             if user.totp_enabled:
                 session["pending_2fa_user"] = user.id
+                session["pending_2fa_kind"] = "real"
                 return redirect(url_for("two_factor"))
-            return _complete_login(user)
-        else:
-            if user:
-                user.failed_attempts = (user.failed_attempts or 0) + 1
-                if user.failed_attempts >= 5:
-                    user.locked_until = datetime.utcnow() + timedelta(minutes=15)
-                db.session.commit()
-            audit("login_fail", f"Attempt for {uname} from {ip}")
-            flash("Access denied.", "error")
+            return _complete_login(user, is_duress=False)
+
+        if is_duress:
+            # Duress mode — log it, open decoy
+            user.last_ip = ip
+            user.duress_triggered_at = datetime.utcnow()
+            db.session.commit()
+            audit("duress_login", f"{user.username} used duress password", actor=user.username)
+            return _complete_login(user, is_duress=True)
+
+        if user:
+            user.failed_attempts = (user.failed_attempts or 0) + 1
+            if user.failed_attempts >= 5:
+                user.locked_until = datetime.utcnow() + timedelta(minutes=15)
+            db.session.commit()
+        audit("login_fail", f"Attempt for {uname} from {ip}")
+        flash("Access denied.", "error")
     return render_template("login.html", form=form)
 
 
-def _complete_login(user):
+def _complete_login(user, is_duress=False):
     user.last_login = datetime.utcnow()
     db.session.commit()
     login_user(user)
     session.permanent = True
     session["last_seen"] = datetime.utcnow().timestamp()
     session["sid"] = secrets.token_hex(16)
+    session["duress"] = bool(is_duress)
     rec = SessionRecord(user_id=user.id, session_id=session["sid"],
                         ip=user.last_ip or "",
-                        user_agent=request.headers.get("User-Agent", "")[:300])
+                        user_agent=request.headers.get("User-Agent", "")[:300],
+                        is_duress=is_duress)
     db.session.add(rec)
     db.session.commit()
-    audit("login_success", f"{user.username} as {user.role}", actor=user.username)
+    audit("login_success",
+          f"{user.username} as {user.role}{' [DURESS]' if is_duress else ''}",
+          actor=user.username)
     return redirect(url_for("dashboard"))
+
+
+def is_duress_session():
+    return bool(session.get("duress"))
 
 
 @app.route("/two-factor", methods=["GET", "POST"])
@@ -1429,7 +1428,8 @@ def two_factor():
     if form.validate_on_submit():
         if user.verify_totp(form.code.data) or user.check_backup_code(form.code.data):
             session.pop("pending_2fa_user", None)
-            return _complete_login(user)
+            kind = session.pop("pending_2fa_kind", "real")
+            return _complete_login(user, is_duress=(kind == "duress"))
         flash("Invalid code.", "error")
     return render_template("two_factor.html", form=form)
 
@@ -1445,6 +1445,7 @@ def logout():
             db.session.commit()
     audit("logout", current_user.username, actor=current_user.username)
     logout_user()
+    session.clear()
     flash("Session terminated.", "success")
     return redirect(url_for("login"))
 
@@ -1526,6 +1527,34 @@ def disable_2fa():
     return redirect(url_for("setup_2fa"))
 
 
+# ---- Wave 3: Duress settings ----
+@app.route("/settings/duress", methods=["GET", "POST"])
+@login_required
+def setup_duress():
+    form = DuressForm()
+    if form.validate_on_submit():
+        if not current_user.check_password(form.current_password.data):
+            flash("Current password is incorrect.", "error")
+        else:
+            dp = (form.duress_password.data or "").strip()
+            if dp and len(dp) < 6:
+                flash("Duress password must be at least 6 characters.", "error")
+            else:
+                current_user.set_duress(dp)
+                current_user.duress_contact = (form.duress_contact.data or "").strip()
+                db.session.commit()
+                audit("duress_updated",
+                      f"duress {'set' if dp else 'cleared'}",
+                      actor=current_user.username)
+                flash("Duress settings updated.", "success")
+                return redirect(url_for("dashboard"))
+    else:
+        form.duress_contact.data = current_user.duress_contact or ""
+    return render_template("setup_duress.html", form=form,
+                           has_duress=bool(current_user.duress_hash),
+                           contact=current_user.duress_contact)
+
+
 @app.route("/settings/sessions", methods=["GET", "POST"])
 @login_required
 def my_sessions():
@@ -1554,6 +1583,16 @@ def my_sessions():
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    # --- Duress mode: show decoy dashboard ---
+    if is_duress_session():
+        # 3 fake cases with innocent titles
+        fake_cases = [
+            {"id": -1, "title": "Grocery list", "subject": "Personal"},
+            {"id": -2, "title": "Work meeting notes", "subject": "Office"},
+            {"id": -3, "title": "Books to read", "subject": "Personal"},
+        ]
+        return render_template("dashboard_duress.html", fake_cases=fake_cases)
+
     if current_user.role in (ROLE_TOP, ROLE_ANALYST):
         cases = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
     else:
@@ -1599,6 +1638,10 @@ def dashboard():
 @app.route("/add", methods=["POST"])
 @login_required
 def quick_add():
+    if is_duress_session():
+        # Silently pretend to save, then redirect to decoy dashboard
+        flash("Saved.", "success")
+        return redirect(url_for("dashboard"))
     if current_user.role != ROLE_AGENT:
         flash("Only the assigned Agent can log entries.", "error")
         return redirect(url_for("dashboard"))
@@ -1628,13 +1671,12 @@ def quick_add():
     if not body and files:
         body = f"[{files[0][0].capitalize()} attached]"
     u = Update(case_id=case.id, happened_at=when, created_by=current_user.username)
-    u.case = case   # attach so case_encrypt has the case's key
+    u.case = case
     u.body = body
     db.session.add(u)
     db.session.flush()
     u.integrity_hash = compute_integrity(u, extra=u.body_enc[:32])
     index_text("update", u.id, body, case_id=case.id)
-
     for kind, f in files:
         raw = f.read()
         if not raw:
@@ -1645,14 +1687,10 @@ def quick_add():
             mimetype=f.mimetype or "application/octet-stream",
             data=raw, sha256=sha256_bytes(raw))
         db.session.add(m)
-
     db.session.commit()
-
-    # Spawn background transcription — never blocks the request
     for m in u.photos:
         if m.kind == "voice":
             spawn_transcription(m.id, case.id)
-
     custody(case.id, "EDIT", f"Added entry: {body[:60]}")
     audit("update_add", f"Case #{u.case_id}: {body[:40]}", actor=current_user.username)
     flash("Entry logged.", "success")
@@ -1670,7 +1708,6 @@ def media_transcribe(mid):
     if m.kind != "voice":
         flash("Only voice memos can be transcribed.", "error")
         return redirect(request.referrer or url_for("dashboard"))
-    # Fire and forget
     spawn_transcription(m.id, m.update.case.id)
     flash("Transcription started. Refresh in a few seconds.", "success")
     return redirect(request.referrer or url_for("dashboard"))
@@ -1682,6 +1719,8 @@ def media_transcribe(mid):
 @app.route("/cases", methods=["GET", "POST"])
 @login_required
 def cases():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     if current_user.role != ROLE_TOP:
         flash("Only Top Secret can create cases.", "error")
         return redirect(url_for("dashboard"))
@@ -1694,13 +1733,11 @@ def cases():
             threat_level=form.threat_level.data, due_date=form.due_date.data,
             assigned_agent_id=form.assigned_agent_id.data or None,
             created_by=current_user.username)
-        # Generate the per-case key BEFORE setting any encrypted field
         ck = new_case_key()
         c.case_key_wrapped = wrap_case_key(ck)
         c.key_rotated_at = datetime.utcnow()
         db.session.add(c)
         db.session.flush()
-        # Now safe to encrypt notes — case has a key
         c.notes = form.notes.data or ""
         c.integrity_hash = compute_integrity(c)
         index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
@@ -1716,11 +1753,11 @@ def cases():
 @app.route("/cases/<int:cid>", methods=["GET", "POST"])
 @login_required
 def case_detail(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
-
-    # Ensure old cases get a key if they don't have one
     try:
         if not c.case_key_wrapped:
             c.case_key_wrapped = wrap_case_key(new_case_key())
@@ -1729,13 +1766,10 @@ def case_detail(cid):
     except Exception as e:
         print(f"⚠️  key backfill failed: {e}")
         db.session.rollback()
-
-    # Log the view (once per session per case)
     viewed_key = f"viewed_case_{cid}"
     if not session.get(viewed_key):
         custody(cid, "VIEW", "Case opened")
         session[viewed_key] = True
-
     form = CaseForm(obj=c)
     form.assigned_agent_id.choices = agent_choices()
     if form.validate_on_submit():
@@ -1766,6 +1800,8 @@ def case_detail(cid):
 @app.route("/cases/<int:cid>/delete", methods=["POST"])
 @login_required
 def case_delete(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_delete_case(current_user, c):
         flash("Only Top Secret can delete cases.", "error")
@@ -1782,6 +1818,9 @@ def case_delete(cid):
 @app.route("/cases/<int:cid>/report", methods=["POST"])
 @login_required
 def case_report(cid):
+    if is_duress_session():
+        flash("Export unavailable.", "error")
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1812,33 +1851,24 @@ def case_report(cid):
 @login_required
 @require_role(ROLE_TOP)
 def case_rotate_key(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     old_key = unwrap_case_key(c.case_key_wrapped)
     if not old_key:
         flash("No existing key to rotate.", "error")
         return redirect(url_for("case_detail", cid=cid))
-
-    # 1) decrypt everything with old key
-    decrypted_updates = []
-    for u in c.updates:
-        decrypted_updates.append((u, u.body))
-    decrypted_notes = []
-    for n in c.analyst_notes:
-        decrypted_notes.append((n, n.body))
+    decrypted_updates = [(u, u.body) for u in c.updates]
+    decrypted_notes = [(n, n.body) for n in c.analyst_notes]
     decrypted_case_notes = c.notes
-
-    # 2) new key
     new_key = new_case_key()
     c.case_key_wrapped = wrap_case_key(new_key)
     c.key_rotated_at = datetime.utcnow()
-
-    # 3) re-encrypt everything with new key
     c.notes = decrypted_case_notes
     for u, plain in decrypted_updates:
         u.body = plain
     for n, plain in decrypted_notes:
         n.body = plain
-
     db.session.commit()
     custody(cid, "KEY_ROTATE", f"Key rotated by {current_user.username}")
     audit("case_key_rotate", f"Case #{cid}", actor=current_user.username)
@@ -1847,11 +1877,13 @@ def case_rotate_key(cid):
 
 
 # ============================================================
-# CHAIN OF CUSTODY ROUTES
+# CHAIN OF CUSTODY
 # ============================================================
 @app.route("/cases/<int:cid>/custody")
 @login_required
 def case_custody(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1859,11 +1891,9 @@ def case_custody(cid):
         db.select(CustodyLog).where(CustodyLog.case_id == cid)
         .order_by(CustodyLog.id.desc())
     ).scalars().all()
-
-    # Verify the chain
     chain_ok = True
     broken_at = None
-    ordered = list(reversed(entries))  # oldest first
+    ordered = list(reversed(entries))
     prev = "0" * 64
     for e in ordered:
         expected_payload = "|".join([
@@ -1876,7 +1906,6 @@ def case_custody(cid):
             broken_at = e.id
             break
         prev = e.entry_hash
-
     return render_template("custody.html", case=c, entries=entries,
                            chain_ok=chain_ok, broken_at=broken_at)
 
@@ -1884,6 +1913,8 @@ def case_custody(cid):
 @app.route("/cases/<int:cid>/custody/add", methods=["POST"])
 @login_required
 def case_custody_add(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_view_case(current_user, c):
         abort(403)
@@ -1897,7 +1928,8 @@ def case_custody_add(cid):
 @app.route("/custody")
 @login_required
 def custody_overview():
-    """Top Secret sees every case's last action."""
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
         flash("Restricted.", "error")
         return redirect(url_for("dashboard"))
@@ -1913,6 +1945,8 @@ def custody_overview():
 @app.route("/cases/<int:cid>/analyst", methods=["POST"])
 @login_required
 def analyst_add(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_write_analyst_note(current_user, c):
         abort(403)
@@ -1935,6 +1969,8 @@ def analyst_add(cid):
 @app.route("/analyst-notes/<int:nid>/edit", methods=["POST"])
 @login_required
 def analyst_note_edit(nid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     n = db.session.get(AnalystNote, nid) or abort(404)
     if n.created_by != current_user.username and current_user.role != ROLE_TOP:
         abort(403)
@@ -1951,6 +1987,8 @@ def analyst_note_edit(nid):
 @app.route("/analyst-notes/<int:nid>/delete", methods=["POST"])
 @login_required
 def analyst_note_delete(nid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     n = db.session.get(AnalystNote, nid) or abort(404)
     if n.created_by != current_user.username and current_user.role != ROLE_TOP:
         abort(403)
@@ -1967,6 +2005,8 @@ def analyst_note_delete(nid):
 @app.route("/analyst")
 @login_required
 def analyst_workspace():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
         flash("Analyst access only.", "error")
         return redirect(url_for("dashboard"))
@@ -1984,6 +2024,8 @@ def analyst_workspace():
 @app.route("/updates/<int:uid>/edit", methods=["GET", "POST"])
 @login_required
 def update_edit(uid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     u = db.session.get(Update, uid) or abort(404)
     if not can_write_case_entries(current_user, u.case):
         abort(403)
@@ -2011,14 +2053,9 @@ def update_edit(uid):
                                 data=raw, sha256=sha256_bytes(raw))
                             db.session.add(m)
                             db.session.flush()
-                            if kind == "voice":
-                                m_id = m.id
-                                u_cid = u.case_id
-                                # defer to background after commit
         u.integrity_hash = compute_integrity(u, extra=u.body_enc[:32])
         index_text("update", u.id, u.body, case_id=u.case_id)
         db.session.commit()
-        # Spawn background transcription for any new voice memos
         for m in u.photos:
             if m.kind == "voice" and not m.transcript:
                 spawn_transcription(m.id, u.case_id)
@@ -2031,6 +2068,8 @@ def update_edit(uid):
 @app.route("/updates/<int:uid>/delete", methods=["POST"])
 @login_required
 def update_delete(uid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     u = db.session.get(Update, uid) or abort(404)
     if not can_write_case_entries(current_user, u.case):
         abort(403)
@@ -2048,6 +2087,8 @@ def update_delete(uid):
 @app.route("/updates/<int:uid>/media/<int:mid>/delete", methods=["POST"])
 @login_required
 def update_media_delete(uid, mid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     m = db.session.get(UpdateMedia, mid) or abort(404)
     if m.update_id != uid:
         abort(404)
@@ -2063,6 +2104,8 @@ def update_media_delete(uid, mid):
 @app.route("/media/<int:mid>/view")
 @login_required
 def media_view(mid):
+    if is_duress_session():
+        abort(404)
     m = db.session.get(UpdateMedia, mid) or abort(404)
     if m.update and m.update.case and not can_view_case(current_user, m.update.case):
         abort(403)
@@ -2081,6 +2124,8 @@ def media_view(mid):
 @app.route("/entities", methods=["GET", "POST"])
 @login_required
 def entities():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     form = EntityForm()
     if form.validate_on_submit():
         eid = request.form.get("entity_id", type=int)
@@ -2113,7 +2158,6 @@ def entities():
             audit("entity_create", e.name, actor=current_user.username)
             flash("Person saved.", "success")
         return redirect(url_for("entities"))
-
     rows = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None).order_by(Entity.name)
     ).scalars().all()
@@ -2129,6 +2173,8 @@ def entities():
 @app.route("/entities/<int:eid>")
 @login_required
 def entity_detail(eid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     e = db.session.get(Entity, eid) or abort(404)
     cases = db.session.execute(
         db.select(CaseEntity).where(CaseEntity.entity_id == eid)
@@ -2139,6 +2185,8 @@ def entity_detail(eid):
 @app.route("/entities/<int:eid>/update", methods=["POST"])
 @login_required
 def entity_update(eid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     e = db.session.get(Entity, eid) or abort(404)
     if "region" in request.form:
         e.region = (request.form.get("region") or "").strip()
@@ -2154,6 +2202,8 @@ def entity_update(eid):
 @login_required
 @require_role(ROLE_TOP)
 def entity_delete(eid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     ok, err = delete_entity_and_children(eid)
     if not ok:
         flash(f"Delete failed: {err}", "error")
@@ -2163,6 +2213,8 @@ def entity_delete(eid):
 @app.route("/cases/<int:cid>/entities", methods=["POST"])
 @login_required
 def case_entity_add(cid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     c = db.session.get(Case, cid) or abort(404)
     if not can_write_case_entries(current_user, c):
         abort(403)
@@ -2188,6 +2240,8 @@ def case_entity_add(cid):
 @app.route("/case-entities/<int:link_id>/edit", methods=["POST"])
 @login_required
 def case_entity_edit(link_id):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     link = db.session.get(CaseEntity, link_id) or abort(404)
     if not can_write_case_entries(current_user, link.case):
         abort(403)
@@ -2201,6 +2255,8 @@ def case_entity_edit(link_id):
 @app.route("/case-entities/<int:link_id>/delete", methods=["POST"])
 @login_required
 def case_entity_delete(link_id):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     link = db.session.get(CaseEntity, link_id) or abort(404)
     if not can_write_case_entries(current_user, link.case):
         abort(403)
@@ -2211,7 +2267,7 @@ def case_entity_delete(link_id):
 
 
 # ============================================================
-# WAVE 1 — ENTITY RESOLUTION
+# WAVE 1 — RESOLUTION + GRAPH + DEEP SEARCH
 # ============================================================
 def _similarity(name_a, name_b):
     a = name_a.lower().strip()
@@ -2239,6 +2295,8 @@ def _similarity(name_a, name_b):
 @login_required
 @require_role(ROLE_TOP, ROLE_ANALYST)
 def resolution():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     rows = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None).order_by(Entity.name)
     ).scalars().all()
@@ -2280,6 +2338,8 @@ def _why_similar(a, b):
 @login_required
 @require_role(ROLE_TOP, ROLE_ANALYST)
 def resolution_merge():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     keep_id = request.form.get("keep_id", type=int)
     merge_id = request.form.get("merge_id", type=int)
     if not keep_id or not merge_id or keep_id == merge_id:
@@ -2332,6 +2392,8 @@ def resolution_merge():
 @login_required
 @require_role(ROLE_TOP)
 def resolution_unmerge(eid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     e = db.session.get(Entity, eid) or abort(404)
     e.merged_into_id = None
     db.session.commit()
@@ -2339,12 +2401,11 @@ def resolution_unmerge(eid):
     return redirect(url_for("resolution"))
 
 
-# ============================================================
-# WAVE 1 — LINK GRAPH
-# ============================================================
 @app.route("/graph")
 @login_required
 def graph():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     entities = db.session.execute(
         db.select(Entity).where(Entity.merged_into_id == None)
     ).scalars().all()
@@ -2398,6 +2459,8 @@ def graph():
 @app.route("/graph/path")
 @login_required
 def graph_path():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     a = request.args.get("from", type=int)
     b = request.args.get("to", type=int)
     if not a or not b:
@@ -2420,16 +2483,15 @@ def graph_path():
             path_data.append({"id": pid, "name": e.name if e else "?"})
         return render_template("graph_path.html", path=path_data, a=a, b=b)
     except Exception:
-        flash("No connection found between those entities.", "error")
+        flash("No connection found.", "error")
         return redirect(url_for("graph"))
 
 
-# ============================================================
-# WAVE 1 — DEEP SEARCH
-# ============================================================
 @app.route("/deep-search")
 @login_required
 def deep_search():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     q = (request.args.get("q") or "").strip()
     results = {"cases": [], "updates": [], "analyst_notes": [], "entities": [], "voice": []}
     if q:
@@ -2476,6 +2538,8 @@ def deep_search():
 @login_required
 @require_role(ROLE_TOP)
 def deep_search_reindex():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     SearchIndex.query.delete()
     for c in db.session.execute(db.select(Case)).scalars().all():
         index_text("case", c.id, f"{c.title} {c.subject} {c.notes}", case_id=c.id)
@@ -2495,11 +2559,187 @@ def deep_search_reindex():
 
 
 # ============================================================
-# RELATIONSHIPS / CONTACTS / BASIC SEARCH / ACTIVITY
+# WAVE 3 — PATTERN DETECTION
+# ============================================================
+@app.route("/patterns")
+@login_required
+def patterns():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
+    if current_user.role not in (ROLE_TOP, ROLE_ANALYST):
+        flash("Analyst or Top Secret only.", "error")
+        return redirect(url_for("dashboard"))
+
+    # Gather updates the user can see
+    all_updates = db.session.execute(
+        db.select(Update).order_by(Update.happened_at.asc())
+    ).scalars().all()
+    visible = [u for u in all_updates if can_view_case(current_user, u.case)]
+
+    # --- Co-occurrence: which entity names appear together in the same update ---
+    cooc = Counter()
+    entities = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None)
+    ).scalars().all()
+    name_to_id = {e.name.lower(): e.id for e in entities}
+    entity_by_id = {e.id: e for e in entities}
+    for u in visible:
+        body_lower = (u.body or "").lower()
+        hits = []
+        for name, eid in name_to_id.items():
+            if name in body_lower:
+                hits.append(eid)
+        for i in range(len(hits)):
+            for j in range(i + 1, len(hits)):
+                key = tuple(sorted((hits[i], hits[j])))
+                cooc[key] += 1
+
+    co_occurrences = []
+    for (a, b), count in cooc.most_common(15):
+        if count >= 2:
+            co_occurrences.append({
+                "a": entity_by_id.get(a),
+                "b": entity_by_id.get(b),
+                "count": count,
+            })
+
+    # --- Temporal patterns: activity by weekday ---
+    weekday_counts = Counter()
+    hour_counts = Counter()
+    for u in visible:
+        dt = u.happened_at
+        weekday_counts[dt.strftime("%A")] += 1
+        hour_counts[dt.hour] += 1
+
+    weekday_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    weekday_data = [(d, weekday_counts.get(d, 0)) for d in weekday_order]
+    max_weekday = max([c for _, c in weekday_data]) or 1
+
+    hour_data = [(h, hour_counts.get(h, 0)) for h in range(24)]
+    max_hour = max([c for _, c in hour_data]) or 1
+
+    # --- Anomaly: unusually long updates ---
+    lengths = [len(u.body or "") for u in visible if u.body]
+    avg_len = sum(lengths) / len(lengths) if lengths else 0
+    long_updates = [u for u in visible if u.body and len(u.body) > avg_len * 2.5 and len(u.body) > 300][:10]
+
+    # --- Slow periods: 14+ day gaps ---
+    gaps = []
+    sorted_updates = sorted(visible, key=lambda u: u.happened_at)
+    for i in range(1, len(sorted_updates)):
+        delta = sorted_updates[i].happened_at - sorted_updates[i-1].happened_at
+        if delta.days >= 14:
+            gaps.append({
+                "from": sorted_updates[i-1].happened_at,
+                "to": sorted_updates[i].happened_at,
+                "days": delta.days,
+            })
+
+    # --- First appearance of each entity ---
+    first_appearances = []
+    for e in entities:
+        name_lower = e.name.lower()
+        for u in sorted_updates:
+            if name_lower in (u.body or "").lower():
+                first_appearances.append({"entity": e, "when": u.happened_at, "update": u})
+                break
+    first_appearances.sort(key=lambda x: x["when"], reverse=True)
+    first_appearances = first_appearances[:10]
+
+    # --- Co-location in same region ---
+    same_region = []
+    region_groups = defaultdict(list)
+    for e in entities:
+        if e.region:
+            region_groups[e.region.lower()].append(e)
+    for region, group in region_groups.items():
+        if len(group) >= 2:
+            same_region.append({"region": group[0].region, "entities": group})
+
+    stats = {
+        "total_updates": len(visible),
+        "avg_length": int(avg_len),
+        "unique_entities": len(entities),
+        "co_occurrences": len(co_occurrences),
+    }
+
+    return render_template("patterns.html",
+                           stats=stats,
+                           co_occurrences=co_occurrences,
+                           weekday_data=weekday_data,
+                           max_weekday=max_weekday,
+                           hour_data=hour_data,
+                           max_hour=max_hour,
+                           long_updates=long_updates,
+                           gaps=gaps,
+                           first_appearances=first_appearances,
+                           same_region=same_region)
+
+
+# ============================================================
+# WAVE 3 — GEOSPATIAL ANALYSIS
+# ============================================================
+@app.route("/geo")
+@login_required
+def geo():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
+    entities = db.session.execute(
+        db.select(Entity).where(Entity.merged_into_id == None)
+    ).scalars().all()
+    with_coords = [e for e in entities if e.latitude and e.longitude]
+
+    # Group by region for co-location
+    region_groups = defaultdict(list)
+    for e in entities:
+        if e.region:
+            region_groups[e.region.lower()].append(e)
+    co_located = []
+    for region, group in region_groups.items():
+        if len(group) >= 2:
+            co_located.append({"region": group[0].region, "entities": group})
+
+    # Build heatmap points (region name -> count)
+    region_counts = Counter()
+    for e in entities:
+        if e.region:
+            region_counts[e.region] += 1
+
+    # Build markers for map
+    markers = [{
+        "id": e.id, "name": e.name, "type": e.type,
+        "lat": e.latitude, "lng": e.longitude,
+        "threat": e.threat_level, "region": e.region,
+        "color": {"LOW": "#3fb950", "MEDIUM": "#ffb000",
+                  "HIGH": "#ff7b00", "CRITICAL": "#ff3b30"}.get(e.threat_level, "#8a8577"),
+    } for e in with_coords]
+
+    # Entity-to-entity proximity (within 0.5 degrees)
+    nearby_pairs = []
+    for i in range(len(with_coords)):
+        for j in range(i + 1, len(with_coords)):
+            a, b = with_coords[i], with_coords[j]
+            dlat = abs(a.latitude - b.latitude)
+            dlng = abs(a.longitude - b.longitude)
+            if dlat < 0.5 and dlng < 0.5:
+                nearby_pairs.append({"a": a, "b": b, "dlat": dlat, "dlng": dlng})
+
+    return render_template("geo.html",
+                           markers=markers,
+                           co_located=co_located,
+                           nearby_pairs=nearby_pairs,
+                           region_counts=region_counts.most_common(20),
+                           total_located=len(markers))
+
+
+# ============================================================
+# RELATIONSHIPS / CONTACTS / SEARCH / ACTIVITY
 # ============================================================
 @app.route("/who-knows-who", methods=["GET", "POST"])
 @login_required
 def relationships():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     form = RelationshipForm()
     form.from_id.choices = entity_choices()
     form.to_id.choices = entity_choices()
@@ -2521,6 +2761,8 @@ def relationships():
 @app.route("/relationships/<int:rid>/delete", methods=["POST"])
 @login_required
 def relationship_delete(rid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     r = db.session.get(Relationship, rid) or abort(404)
     db.session.delete(r)
     db.session.commit()
@@ -2530,6 +2772,8 @@ def relationship_delete(rid):
 @app.route("/contacts", methods=["GET", "POST"])
 @login_required
 def contacts():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     form = SourceForm()
     if form.validate_on_submit():
         s = Source(handle=form.handle.data)
@@ -2545,6 +2789,8 @@ def contacts():
 @app.route("/contacts/<int:sid>/delete", methods=["POST"])
 @login_required
 def contact_delete(sid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     s = db.session.get(Source, sid) or abort(404)
     db.session.delete(s)
     db.session.commit()
@@ -2554,6 +2800,8 @@ def contact_delete(sid):
 @app.route("/search")
 @login_required
 def search():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     q = (request.args.get("q") or "").strip()
     results = {"cases": [], "updates": [], "entities": []}
     if q:
@@ -2576,6 +2824,8 @@ def search():
 @login_required
 @require_role(ROLE_TOP)
 def activity():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     rows = db.session.execute(db.select(AuditLog).order_by(AuditLog.created_at.desc()).limit(300)).scalars().all()
     return render_template("audit.html", entries=rows)
 
@@ -2586,6 +2836,8 @@ def activity():
 @app.route("/timed-notes", methods=["GET", "POST"])
 @login_required
 def drops():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     form = DeadDropForm()
     if form.validate_on_submit():
         d = DeadDrop(title=form.title.data, unlock_at=form.unlock_at.data,
@@ -2602,6 +2854,8 @@ def drops():
 @app.route("/timed-notes/<int:did>/delete", methods=["POST"])
 @login_required
 def drop_delete(did):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     d = db.session.get(DeadDrop, did) or abort(404)
     db.session.delete(d)
     db.session.commit()
@@ -2611,6 +2865,8 @@ def drop_delete(did):
 @app.route("/briefing")
 @login_required
 def briefing():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     days = int(request.args.get("days", 1))
     since = datetime.now() - timedelta(days=days)
     updates = db.session.execute(
@@ -2623,6 +2879,8 @@ def briefing():
 @app.route("/map")
 @login_required
 def map_view():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     people = db.session.execute(db.select(Entity)).scalars().all()
     markers = []
     for p in people:
@@ -2644,6 +2902,8 @@ def map_view():
 @login_required
 @require_role(ROLE_TOP)
 def backups():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     rows = db.session.execute(db.select(Backup).order_by(Backup.created_at.desc())).scalars().all()
     return render_template("backups.html", backups=rows)
 
@@ -2652,6 +2912,8 @@ def backups():
 @login_required
 @require_role(ROLE_TOP)
 def backup_create():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     password = (request.form.get("password") or "").strip()
     if len(password) < 8:
         flash("Backup password must be at least 8 characters.", "error")
@@ -2672,6 +2934,8 @@ def backup_create():
 @app.route("/integrity")
 @login_required
 def integrity():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     issues = []
     for c in db.session.execute(db.select(Case)).scalars().all():
         expected = compute_integrity(c)
@@ -2688,6 +2952,8 @@ def integrity():
 @login_required
 @require_role(ROLE_TOP)
 def users():
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     form = UserForm()
     if form.validate_on_submit():
         uname = form.username.data.strip()
@@ -2710,6 +2976,8 @@ def users():
 @login_required
 @require_role(ROLE_TOP)
 def user_delete(uid):
+    if is_duress_session():
+        return redirect(url_for("dashboard"))
     if uid == current_user.id:
         flash("Cannot delete yourself.", "error")
         return redirect(url_for("users"))
@@ -2773,8 +3041,6 @@ def bootstrap():
                 existing.role = ROLE_AGENT
                 db.session.commit()
             print(f"✅ User {u} OK (role={existing.role})")
-
-        # Backfill per-case keys for existing cases
         for c in db.session.execute(db.select(Case)).scalars().all():
             if not c.case_key_wrapped:
                 c.case_key_wrapped = wrap_case_key(new_case_key())

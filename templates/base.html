@@ -34,6 +34,10 @@
     <a href="{{ url_for('resolution') }}" class="{{ 'active' if active=='resolution' }}">Resolve</a>
     {% endif %}
     <a href="{{ url_for('deep_search') }}" class="{{ 'active' if active=='deep_search' }}">Deep</a>
+    {% if current_user.role in ['top_secret','analyst'] %}
+    <a href="{{ url_for('patterns') }}" class="{{ 'active' if active=='patterns' }}">Patterns</a>
+    <a href="{{ url_for('geo') }}" class="{{ 'active' if active=='geo' }}">Geo</a>
+    {% endif %}
     <a href="{{ url_for('search') }}" class="{{ 'active' if active=='search' }}">Search</a>
     <a href="{{ url_for('briefing') }}" class="{{ 'active' if active=='briefing' }}">Brief</a>
     {% if current_user.role == 'analyst' %}
@@ -54,6 +58,7 @@
       </div>
       <a href="{{ url_for('setup_2fa') }}" class="menu-link">🔐 {{ '2FA Enabled' if current_user.totp_enabled else 'Enable 2FA' }}</a>
       <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
+      <a href="{{ url_for('setup_duress') }}" class="menu-link">🛡 Duress Mode</a>
       <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
       <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity</a>
       {% if current_user.role in ['top_secret','analyst'] %}

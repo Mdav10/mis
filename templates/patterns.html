@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Patterns{% endblock %}
+{% block content %}
+<h1>◇ Pattern Detection</h1>
+
+<section class="card">
+  <h2>Overview</h2>
+  <div class="stat-strip" style="grid-template-columns:repeat(4,1fr);">
+    <div class="stat"><span class="num">{{ stats.total_updates }}</span><span class="lbl">Updates</span></div>
+    <div class="stat"><span class="num">{{ stats.unique_entities }}</span><span class="lbl">People</span></div>
+    <div class="stat"><span class="num">{{ stats.avg_length }}</span><span class="lbl">Avg chars</span></div>
+    <div class="stat"><span class="num">{{ stats.co_occurrences }}</span><span class="lbl">Co-occur</span></div>
+  </div>
+</section>
+
+{% if co_occurrences %}
+<section class="card">
+  <h2>◈ Co-occurrence (people appearing together)</h2>
+  <ul class="list">
+    {% for c in co_occurrences %}
+    <li>
+      <a href="{{ url_for('entity_detail', eid=c.a.id) }}"><b class="person-name">{{ c.a.name }}</b></a>
+      <span class="badge">+</span>
+      <a href="{{ url_for('entity_detail', eid=c.b.id) }}"><b class="person-name">{{ c.b.name }}</b></a>
+      <span class="badge ok">{{ c.count }}×</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="dim">These pairs appear together in the same entry multiple times.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>◷ Activity by weekday</h2>
+  <ul class="list">
+    {% for day, count in weekday_data %}
+    <li>
+      <b style="min-width:100px;display:inline-block;">{{ day }}</b>
+      <div style="flex:1;background:#000;border:1px solid var(--border);height:14px;border-radius:2px;overflow:hidden;">
+        <div style="background:var(--amber);height:100%;width:{{ (count / max_weekday * 100)|round|int }}%;"></div>
+      </div>
+      <span class="dim">{{ count }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <h2>◷ Activity by hour</h2>
+  <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:4px;">
+    {% for hour, count in hour_data %}
+    <div title="{{ hour }}:00 — {{ count }} updates"
+         style="background:var(--amber);opacity:{{ (count / max_hour)|round(2) if count else 0.05 }};height:40px;border-radius:2px;"></div>
+    {% endfor %}
+  </div>
+  <p class="dim">Brighter = more activity. Hover (desktop) or tap to see details.</p>
+</section>
+
+{% if long_updates %}
+<section class="card">
+  <h2>⚠ Unusually long entries</h2>
+  <ul class="updates">
+    {% for u in long_updates %}
+    <li>
+      <div class="upd-time">{{ u.happened_at.strftime('%d %b %Y · %H:%M') }}</div>
+      <div class="upd-case dim">{{ u.case.title if u.case else '—' }} ({{ u.body|length }} chars)</div>
+      <div class="upd-body">{{ u.body[:300] }}{% if u.body|length > 300 %}…{% endif %}</div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if gaps %}
+<section class="card">
+  <h2>◷ Coverage gaps (14+ days)</h2>
+  <ul class="list">
+    {% for g in gaps %}
+    <li>
+      <span>{{ g.from.strftime('%d %b %Y') }} → {{ g.to.strftime('%d %b %Y') }}</span>
+      <span class="badge warn">{{ g.days }} days</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if first_appearances %}
+<section class="card">
+  <h2>◆ First appearance of people</h2>
+  <ul class="list">
+    {% for fa in first_appearances %}
+    <li>
+      <a href="{{ url_for('entity_detail', eid=fa.entity.id) }}"><b class="person-name">{{ fa.entity.name }}</b></a>
+      <span class="dim">first seen {{ fa.when.strftime('%d %b %Y') }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if same_region %}
+<section class="card">
+  <h2>◍ Co-location (same region)</h2>
+  <ul class="list">
+    {% for g in same_region %}
+    <li>
+      <b style="color:var(--amber)">{{ g.region }}</b>
+      <div style="width:100%;">
+        {% for e in g.entities %}
+          <a href="{{ url_for('entity_detail', eid=e.id) }}" class="case-tag">{{ e.name }}</a>
+        {% endfor %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

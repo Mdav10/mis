@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Duress Settings{% endblock %}
+{% block content %}
+<h1>🛡 Duress Mode</h1>
+
+<section class="card">
+  <h2>What this does</h2>
+  <p class="dim">Set a second password. If you are ever forced to open MIS, type the duress password instead of your real one. MIS will open a <b>harmless decoy workspace</b> with fake lists, log the event silently, and never show your real data.</p>
+</section>
+
+<section class="card">
+  <h2>Status</h2>
+  {% if has_duress %}
+    <p style="color:var(--green)"><b>✓ Duress password is set.</b></p>
+  {% else %}
+    <p style="color:var(--text-dim)"><b>Duress mode is off.</b></p>
+  {% endif %}
+  {% if contact %}
+    <p class="dim">Alert contact: {{ contact }}</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Update</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>New duress password (leave blank to disable)</label>
+    {{ form.duress_password(placeholder="e.g. a different password you will remember under stress") }}
+    <label>Alert email (optional)</label>
+    {{ form.duress_contact(placeholder="someone@example.com") }}
+    <label>Your current password (to confirm change)</label>
+    {{ form.current_password() }}
+    <button class="primary big" style="width:100%">Save Duress Settings</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>How it looks when triggered</h2>
+  <p class="dim">The person forcing you sees a normal-looking MIS home page with generic lists — groceries, work notes, books to read. They see nothing real. The event is logged with their IP and timestamp. You can revoke the session later from <a href="{{ url_for('my_sessions') }}">My Sessions</a>.</p>
+</section>
+{% endblock %}
