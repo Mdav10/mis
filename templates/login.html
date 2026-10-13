@@ -1,46 +1,36 @@
 {% extends "base.html" %}
-{% block title %}Authentication{% endblock %}
+{% block title %}Login{% endblock %}
 {% block content %}
 <div class="login-wrap">
   <div class="login-card">
     <h1>MIS</h1>
     <p class="subtitle">Mugisha's Intelligence System</p>
     <p class="clearance-warning">◆ ACCESS RESTRICTED ◆</p>
-    <form method="POST" novalidate autocomplete="off" id="loginForm">
+
+    <form method="POST" novalidate autocomplete="off">
       {{ form.hidden_tag() }}
       {{ form.username(placeholder="USERNAME", autocomplete="username",
-                       autocapitalize="none", autocorrect="off", spellcheck="false") }}
+                       autocapitalize="none", autocorrect="off",
+                       spellcheck="false") }}
       {{ form.password(placeholder="PASSPHRASE", autocomplete="current-password") }}
-      {{ form.submit(class_="primary", id="loginBtn") }}
+      {{ form.submit(class_="primary") }}
     </form>
-    <div id="bootScreen" class="boot-screen" style="display:none"></div>
+
+    <button onclick="window.misInstall()"
+            style="
+              margin-top:16px;width:100%;padding:12px;
+              background:transparent;color:#ffb000;
+              border:1px dashed #ffb000;border-radius:6px;
+              font-weight:700;font-size:11px;letter-spacing:2px;
+              cursor:pointer;text-transform:uppercase;
+              font-family:monospace;
+            ">
+      📲 Install MIS on this device
+    </button>
+    <p class="dim" style="margin-top:10px;font-size:10px;">
+      Adds MIS to your home screen · Opens full-screen · Works offline
+    </p>
   </div>
 </div>
-<script>
-(function(){
-  const form = document.getElementById('loginForm');
-  const boot = document.getElementById('bootScreen');
-  const btn = document.getElementById('loginBtn');
-  if (!form) return;
-  form.addEventListener('submit', function(e){
-    if (btn.disabled) { e.preventDefault(); return; }
-    btn.disabled = true;
-    const lines = [
-      '> AUTHENTICATING ...',
-      '> VERIFYING CLEARANCE ...',
-      '> SESSION ESTABLISHED',
-      '> DECRYPTING CASE FILES ...',
-      '> ACCESS GRANTED'
-    ];
-    boot.style.display = 'block';
-    boot.textContent = '';
-    let i = 0;
-    const iv = setInterval(() => {
-      if (i >= lines.length) { clearInterval(iv); return; }
-      boot.textContent += lines[i] + '\n';
-      i++;
-    }, 180);
-  });
-})();
-</script>
 {% endblock %}
+{% block footer %}{% endblock %}

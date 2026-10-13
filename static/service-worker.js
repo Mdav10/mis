@@ -1,11 +1,11 @@
-// MIS service worker v20 — offline fallback
-const CACHE = "mis-v20";
-const OFFLINE_URL = "/offline";
+// MIS service worker v21 — minimal, correct, installable
+const CACHE = "mis-v21";
+const PRECACHE = ["/", "/offline"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll([OFFLINE_URL]))
+    caches.open(CACHE).then((cache) => cache.addAll(PRECACHE).catch(() => {}))
   );
 });
 
@@ -21,20 +21,23 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  // Never intercept API / media / dynamic routes
+
+  // Never intercept these — let the browser/network handle
   if (url.pathname.startsWith("/media/") ||
-      url.pathname.startsWith("/cases/") ||
-      url.pathname.startsWith("/add") ||
-      url.pathname.startsWith("/offline") ||
+      url.pathname.startsWith("/static/") ||
+      url.pathname.startsWith("/icon-") ||
       url.pathname.endsWith(".pdf") ||
-      url.pathname.endsWith(".misbak")) {
+      url.pathname.endsWith(".misbak") ||
+      url.pathname === "/manifest.json" ||
+      url.pathname === "/service-worker.js" ||
+      url.pathname.startsWith("/pwa-check")) {
     return;
   }
-  // Network-first, fall back to offline page on HTML navigations
+
   event.respondWith(
     fetch(req).catch(() => {
       if (req.mode === "navigate") {
-        return caches.match(OFFLINE_URL);
+        return caches.match("/offline").then((r) => r || caches.match("/"));
       }
       return caches.match(req);
     })
