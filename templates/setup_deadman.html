@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Dead Man's Switch{% endblock %}
+{% block content %}
+<h1>☠ Dead Man's Switch</h1>
+
+<section class="card">
+  <h2>What this does</h2>
+  <p class="dim">If you don't log in for the set number of days, MIS sends an alert to your Telegram contact. Useful if you disappear and want your work preserved or someone warned.</p>
+</section>
+
+<section class="card">
+  <h2>Status</h2>
+  {% if status == 'off' %}
+    <p style="color:var(--text-dim)"><b>Disabled.</b></p>
+  {% elif status == 'ok' %}
+    <p style="color:var(--green)"><b>✓ Armed.</b> {{ days_left }} day(s) until trigger.</p>
+    {% if last %}<p class="dim">Last check-in: {{ last.strftime('%Y-%m-%d %H:%M') }} UTC</p>{% endif %}
+  {% elif status == 'overdue' %}
+    <p style="color:var(--red)"><b>⚠ Overdue.</b> Would fire on next login.</p>
+  {% elif status == 'fired' %}
+    <p style="color:var(--red)"><b>⚠ Fired.</b> Alert was sent.</p>
+  {% endif %}
+  <p class="dim">Telegram: {% if configured %}<span style="color:var(--green)">✓ configured</span>{% else %}<span style="color:var(--red)">not configured</span>{% endif %}
+  {% if contact %} · chat: {{ contact }}{% endif %}</p>
+</section>
+
+<section class="card">
+  <h2>Update</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label class="check">{{ form.enabled() }} Enable Dead Man's Switch</label>
+    <label>Check-in interval (days)</label>{{ form.days() }}
+    <label>Message to send (optional)</label>{{ form.message(rows=3) }}
+    <label>Your current password</label>{{ form.current_password() }}
+    <button class="primary big" style="width:100%">Save</button>
+  </form>
+  <form method="POST" action="{{ url_for('deadman_checkin') }}" style="margin-top:10px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="primary" style="width:100%">✓ Check In Now (Reset Timer)</button>
+  </form>
+  <form method="POST" action="{{ url_for('deadman_test') }}" style="margin-top:10px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="link-btn" style="width:100%">Send Test Alert via Telegram</button>
+  </form>
+</section>
+
+{% if not configured %}
+<section class="card">
+  <h2>How to enable Telegram</h2>
+  <ol class="list" style="list-style:decimal;padding-left:22px;">
+    <li>Open Telegram, message <b>@BotFather</b></li>
+    <li>Send <code>/newbot</code>, pick a name, copy the token it gives you</li>
+    <li>Message your new bot once (say "hi")</li>
+    <li>Visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> in a browser</li>
+    <li>Copy the <code>chat.id</code> number</li>
+    <li>In Render → Environment, add:<br>
+      <code>TELEGRAM_BOT_TOKEN=your_token</code><br>
+      <code>TELEGRAM_CHAT_ID=your_chat_id</code></li>
+    <li>Redeploy</li>
+  </ol>
+</section>
+{% endif %}
+{% endblock %}

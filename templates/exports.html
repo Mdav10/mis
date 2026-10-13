@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Exports{% endblock %}
+{% block content %}
+<h1>📤 Structured Exports</h1>
+
+<section class="card">
+  <h2>What you get</h2>
+  <ul class="list">
+    <li><b>JSON</b> — complete dump, all fields readable</li>
+    <li><b>CSV</b> — zip of 5 tables (cases, updates, people, analyst_notes, custody)</li>
+    <li><b>KML</b> — opens in Google Earth / Google Maps with pins for located people</li>
+    <li><b>STIX 2.1</b> — threat-intel standard bundle, works with MISP and OpenCTI</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Export Now</h2>
+  <form method="POST">
+    {{ form.hidden_tag() }}
+    <label>Format</label>{{ form.format() }}
+    <label>Scope</label>{{ form.scope() }}
+    <label>Case (if single)</label>{{ form.case_id() }}
+    <button class="primary big" style="width:100%">⬇ Download Export</button>
+  </form>
+</section>
+{% endblock %}

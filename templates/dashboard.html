@@ -1,6 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Home{% endblock %}
 {% block content %}
+{% if dm_status == 'overdue' %}
+<section class="card" style="border-color:var(--red);">
+  <h2 style="color:var(--red)">⚠ DEAD MAN'S SWITCH OVERDUE</h2>
+  <p>You haven't checked in for {{ current_user.deadman_days }} days. On next login of another user, an alert will fire.</p>
+  <form method="POST" action="{{ url_for('deadman_checkin') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="primary">Check In Now</button>
+  </form>
+</section>
+{% elif dm_status == 'ok' and dm_days <= 2 %}
+<section class="card" style="border-color:var(--amber);">
+  <h2 style="color:var(--amber)">⚠ Dead Man's Switch — {{ dm_days }} day(s) left</h2>
+  <form method="POST" action="{{ url_for('deadman_checkin') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="primary">Check In</button>
+  </form>
+</section>
+{% endif %}
+
 
 <div class="role-banner role-{{ current_user.role }}">
   <span class="role-label">CLEARANCE:</span>

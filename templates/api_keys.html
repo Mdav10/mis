@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}API Keys{% endblock %}
+{% block content %}
+<h1>🔑 API Keys</h1>
+
+{% if new_key %}
+<section class="card highlight">
+  <h2>⚠ COPY THIS KEY NOW</h2>
+  <p class="dim">You won't see it again. Paste it into your external tool.</p>
+  <pre style="background:#000;padding:14px;border:1px solid var(--amber);border-radius:4px;user-select:all;word-break:break-all;font-size:12px;">{{ new_key }}</pre>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Create API Key</h2>
+  <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Label</label>
+    <input name="label" placeholder="e.g. for my dashboard script">
+    <label>Role</label>
+    <select name="role">
+      <option value="analyst">Analyst (read everything)</option>
+      <option value="agent">Agent (assigned cases only)</option>
+      <option value="top_secret">Top Secret (full access)</option>
+    </select>
+    <button class="primary">Generate Key</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Active Keys ({{ keys|length }})</h2>
+  {% if keys %}
+  <ul class="list">
+    {% for k in keys %}
+    <li>
+      <div style="flex:1 1 100%">
+        <b>{{ k.label or '(unlabeled)' }}</b>
+        <span class="badge">{{ k.role }}</span>
+        <div class="dim">Created {{ k.created_at.strftime('%Y-%m-%d %H:%M') }} by {{ k.created_by }}</div>
+        {% if k.last_used %}<div class="dim">Last used: {{ k.last_used.strftime('%Y-%m-%d %H:%M') }}</div>{% endif %}
+      </div>
+      <form method="POST" action="{{ url_for('api_key_revoke', kid=k.id) }}"
+            onsubmit="return confirm('Revoke this key?');" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-btn">revoke</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="dim">No keys yet.</p>{% endif %}
+</section>
+{% endblock %}

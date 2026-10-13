@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Offline{% endblock %}
+{% block content %}
+<div style="text-align:center;padding:60px 20px;">
+  <h1 style="justify-content:center;">⚠ OFFLINE</h1>
+  <p class="dim">You're not connected to the network.</p>
+  <p class="dim">Cached pages still work. Anything requiring the server will fail until you're back online.</p>
+  <a href="{{ url_for('dashboard') }}" class="primary" style="text-decoration:none;display:inline-block;margin-top:20px;">Try Home</a>
+</div>
+{% endblock %}

@@ -1,16 +1,16 @@
 # ============================================================
-# MIS v19 — Wave 3 fix: Duress Mode is now a fully locked sandbox
-# Base: v18
+# MIS v20 — Wave 4: Dead Man's Switch + Structured Exports + PWA
+# Base: v19 (Wave 3 working, duress sandbox locked)
 # ============================================================
 
-import os, io, json, hmac, hashlib, secrets, base64, re, subprocess, tempfile, threading
+import os, io, json, hmac, hashlib, secrets, base64, re, subprocess, tempfile, threading, csv, zipfile
 from datetime import datetime, timedelta
 from functools import wraps
 from collections import Counter, defaultdict
 
 from flask import (
     Flask, render_template, redirect, url_for, request,
-    flash, send_file, abort, jsonify, session
+    flash, send_file, abort, jsonify, session, Response
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -21,7 +21,7 @@ from flask_wtf import FlaskForm
 from flask_wtf.file import FileField
 from wtforms import (
     StringField, PasswordField, TextAreaField, SelectField,
-    BooleanField, SubmitField, DateTimeField
+    BooleanField, SubmitField, DateTimeField, IntegerField
 )
 from wtforms.validators import DataRequired, Length, EqualTo, Optional, Email
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 from sqlalchemy import or_, text, inspect
 
 import networkx as nx
+import requests
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -48,9 +49,6 @@ load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
-# ============================================================
-# CONFIG
-# ============================================================
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
     _db = os.getenv("DATABASE_URL",
@@ -68,6 +66,8 @@ class Config:
     INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "08800Mpc!")
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
     SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 
 app = Flask(__name__)
@@ -85,7 +85,6 @@ def _inject_now():
 
 @app.context_processor
 def _inject_duress():
-    """Every template can check `duress_mode` — menu items render accordingly."""
     return {"duress_mode": bool(session.get("duress"))}
 
 db = SQLAlchemy(app)
@@ -95,7 +94,7 @@ login_manager.login_message = "Please log in."
 
 
 # ============================================================
-# CRYPTO
+# CRYPTO (same as v19)
 # ============================================================
 MASTER_KEY_ENV = os.getenv("MASTER_KEY", "")
 
@@ -248,7 +247,7 @@ def index_text(source_type, source_id, plain_text, case_id=None):
 
 
 # ============================================================
-# BACKGROUND TRANSCRIPTION
+# TRANSCRIPTION (unchanged)
 # ============================================================
 def _bg_transcribe(app_ctx, media_id, case_id):
     with app_ctx:
@@ -329,7 +328,7 @@ def transcribe_audio(audio_bytes, mime_hint="audio/webm"):
 
 
 # ============================================================
-# ROLES
+# ROLES + MODELS
 # ============================================================
 ROLE_TOP = "top_secret"
 ROLE_AGENT = "agent"
@@ -342,9 +341,6 @@ ROLE_LABELS = [
 ]
 
 
-# ============================================================
-# MODELS
-# ============================================================
 class User(UserMixin, db.Model):
     __tablename__ = "mis_users"
     id = db.Column(db.Integer, primary_key=True)
@@ -363,6 +359,12 @@ class User(UserMixin, db.Model):
     duress_hash = db.Column(db.String(255), default="")
     duress_contact = db.Column(db.String(200), default="")
     duress_triggered_at = db.Column(db.DateTime, nullable=True)
+    # ---- Wave 4: Dead Man's Switch ----
+    deadman_enabled = db.Column(db.Boolean, default=False)
+    deadman_days = db.Column(db.Integer, default=7)         # check-in window
+    deadman_message = db.Column(db.Text, default="")         # note to contact
+    deadman_last_checkin = db.Column(db.DateTime, nullable=True)
+    deadman_fired_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, raw):
@@ -428,6 +430,22 @@ class User(UserMixin, db.Model):
             hashlib.sha256(c.replace("-", "").upper().encode()).hexdigest() for c in codes
         )
         return codes
+
+    def deadman_status(self):
+        if not self.deadman_enabled:
+            return "off"
+        if self.deadman_fired_at:
+            return "fired"
+        last = self.deadman_last_checkin or self.created_at
+        elapsed = (datetime.utcnow() - last).days
+        if elapsed >= self.deadman_days:
+            return "overdue"
+        return "ok"
+
+    def deadman_days_left(self):
+        last = self.deadman_last_checkin or self.created_at
+        remaining = self.deadman_days - (datetime.utcnow() - last).days
+        return max(0, remaining)
 
     @property
     def is_top(self): return self.role == ROLE_TOP
@@ -686,6 +704,19 @@ class CustodyLog(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 
+class APIKey(db.Model):
+    """Wave 4: API keys for external read access."""
+    __tablename__ = "mis_api_keys"
+    id = db.Column(db.Integer, primary_key=True)
+    key_hash = db.Column(db.String(64), unique=True, index=True)
+    label = db.Column(db.String(80), default="")
+    role = db.Column(db.String(20), default=ROLE_ANALYST)
+    created_by = db.Column(db.String(80), default="system")
+    last_used = db.Column(db.DateTime, nullable=True)
+    revoked = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 def custody(case_id, action, detail=""):
     try:
         last = db.session.execute(
@@ -743,10 +774,13 @@ MIGRATIONS = {
         ("duress_hash", "VARCHAR(255) DEFAULT ''"),
         ("duress_contact", "VARCHAR(200) DEFAULT ''"),
         ("duress_triggered_at", "TIMESTAMP"),
+        ("deadman_enabled", "BOOLEAN DEFAULT FALSE"),
+        ("deadman_days", "INTEGER DEFAULT 7"),
+        ("deadman_message", "TEXT DEFAULT ''"),
+        ("deadman_last_checkin", "TIMESTAMP"),
+        ("deadman_fired_at", "TIMESTAMP"),
     ],
-    "mis_sessions": [
-        ("is_duress", "BOOLEAN DEFAULT FALSE"),
-    ],
+    "mis_sessions": [("is_duress", "BOOLEAN DEFAULT FALSE")],
     "mis_cases": [
         ("subject", "VARCHAR(200) DEFAULT ''"),
         ("notes_enc", "TEXT DEFAULT ''"),
@@ -813,29 +847,22 @@ def compute_integrity(obj, extra=""):
 
 
 # ============================================================
-# DURESS SANDBOX ENFORCER
+# DURESS SANDBOX
 # ============================================================
-# When a session is in duress mode, EVERY route except this allow-list
-# gets redirected to /duress — the harmless decoy home.
 DURESS_ALLOWED_ENDPOINTS = {
     "login", "logout", "static", "duress_home",
-    "manifest", "service_worker",
+    "manifest", "service_worker", "offline",
 }
 
 
 @app.before_request
 def _enforce_duress_sandbox():
-    """If this is a duress session, block every real action."""
-    # Not a duress session? Nothing to do.
     if not session.get("duress"):
         return
     endpoint = request.endpoint or ""
     if endpoint in DURESS_ALLOWED_ENDPOINTS:
         return
-    # Any request that would touch real data → send to decoy
-    # POST attempts get silently "succeeded" and bounce back to decoy
     if request.method == "POST":
-        # Fake success message so nothing looks suspicious
         flash("Saved.", "success")
     return redirect(url_for("duress_home"))
 
@@ -1081,6 +1108,29 @@ class DuressForm(FlaskForm):
     submit = SubmitField("Update Duress Settings")
 
 
+class DeadManForm(FlaskForm):
+    enabled = BooleanField("Enable Dead Man's Switch")
+    days = IntegerField("Check-in interval (days)", default=7)
+    message = TextAreaField("Message to send (optional)")
+    current_password = PasswordField("Your current password", validators=[DataRequired()])
+    submit = SubmitField("Save Dead Man's Switch")
+
+
+class ExportForm(FlaskForm):
+    format = SelectField("Format", choices=[
+        ("json", "JSON"),
+        ("csv", "CSV (zip of tables)"),
+        ("kml", "KML (Google Earth)"),
+        ("stix", "STIX 2.1 (JSON)"),
+    ], default="json")
+    scope = SelectField("Scope", choices=[
+        ("all", "All cases I can see"),
+        ("single", "Single case"),
+    ], default="all")
+    case_id = SelectField("Case (if single)", coerce=int, validators=[Optional()])
+    submit = SubmitField("Download Export")
+
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -1122,7 +1172,58 @@ def esc(s):
 
 
 # ============================================================
-# PDF
+# WAVE 4: TELEGRAM ALERT
+# ============================================================
+def send_telegram_alert(text):
+    token = app.config.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat = app.config.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat:
+        print("⚠️  Telegram not configured — logging alert only")
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        return r.status_code == 200
+    except Exception as e:
+        print(f"⚠️  Telegram alert failed: {e}")
+        return False
+
+
+def check_deadman_switches():
+    """Called on every login — fires any overdue switches."""
+    try:
+        now = datetime.utcnow()
+        users = db.session.execute(
+            db.select(User).where(User.deadman_enabled == True)
+        ).scalars().all()
+        for u in users:
+            if u.deadman_fired_at:
+                continue
+            last = u.deadman_last_checkin or u.created_at
+            elapsed = (now - last).days
+            if elapsed >= (u.deadman_days or 7):
+                # Fire!
+                msg = (
+                    f"⚠️ *MIS Dead Man's Switch fired*\n"
+                    f"User *{u.username}* hasn't checked in for "
+                    f"{elapsed} days (limit: {u.deadman_days}).\n"
+                    f"Last check-in: {last.strftime('%Y-%m-%d %H:%M')} UTC\n"
+                )
+                if u.deadman_message:
+                    msg += f"\nMessage: {u.deadman_message}"
+                send_telegram_alert(msg)
+                u.deadman_fired_at = now
+                db.session.commit()
+                audit("deadman_fired", f"{u.username} overdue {elapsed}d", actor="system")
+    except Exception as e:
+        print(f"⚠️  deadman check failed: {e}")
+
+
+# ============================================================
+# PDF (unchanged)
 # ============================================================
 def build_pdf(case, template="full", include_custody=False):
     buf = io.BytesIO()
@@ -1378,6 +1479,250 @@ def make_encrypted_backup(password):
 
 
 # ============================================================
+# WAVE 4: EXPORTERS
+# ============================================================
+def export_json(cases, user):
+    """Full JSON export — everything readable by the user."""
+    out = {
+        "product": "MIS",
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "exported_by": user.username,
+        "case_count": len(cases),
+        "cases": [],
+    }
+    for c in cases:
+        cd = {
+            "id": c.id,
+            "title": c.title,
+            "subject": c.subject,
+            "notes": c.notes,
+            "status": c.status,
+            "priority": c.priority,
+            "threat_level": c.threat_level,
+            "created_by": c.created_by,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "assigned_agent": c.assigned_agent.username if c.assigned_agent else None,
+            "updates": [],
+            "people": [],
+            "analyst_notes": [],
+            "custody": [],
+        }
+        for u in sorted(c.updates, key=lambda x: x.happened_at):
+            cd["updates"].append({
+                "id": u.id,
+                "when": u.happened_at.isoformat(),
+                "body": u.body,
+                "created_by": u.created_by,
+                "media": [{
+                    "id": m.id, "kind": m.kind, "filename": m.filename,
+                    "sha256": m.sha256, "transcript": m.transcript or "",
+                } for m in u.photos],
+            })
+        for link in c.links:
+            cd["people"].append({
+                "entity_id": link.entity_id,
+                "name": link.entity.name if link.entity else "?",
+                "type": link.entity.type if link.entity else "",
+                "region": link.entity.region if link.entity else "",
+                "role": link.role,
+                "note": link.note,
+            })
+        for n in c.analyst_notes:
+            cd["analyst_notes"].append({
+                "id": n.id, "category": n.category, "title": n.title,
+                "body": n.body, "created_by": n.created_by,
+                "created_at": n.created_at.isoformat(),
+            })
+        for cl in db.session.execute(
+            db.select(CustodyLog).where(CustodyLog.case_id == c.id).order_by(CustodyLog.id)
+        ).scalars().all():
+            cd["custody"].append({
+                "when": cl.created_at.isoformat(),
+                "action": cl.action, "detail": cl.detail,
+                "actor": cl.actor, "ip": cl.ip,
+                "entry_hash": cl.entry_hash,
+            })
+        out["cases"].append(cd)
+    return json.dumps(out, indent=2, ensure_ascii=False).encode("utf-8")
+
+
+def export_csv_zip(cases, user):
+    """CSV export as a zip of tables."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        # cases.csv
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        w.writerow(["id", "title", "subject", "status", "priority",
+                    "threat_level", "assigned_agent", "created_by", "created_at"])
+        for c in cases:
+            w.writerow([c.id, c.title, c.subject, c.status, c.priority,
+                        c.threat_level,
+                        c.assigned_agent.username if c.assigned_agent else "",
+                        c.created_by,
+                        c.created_at.isoformat() if c.created_at else ""])
+        z.writestr("cases.csv", sio.getvalue())
+
+        # updates.csv
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        w.writerow(["case_id", "update_id", "when", "body", "created_by", "media_count"])
+        for c in cases:
+            for u in c.updates:
+                w.writerow([c.id, u.id, u.happened_at.isoformat(),
+                            u.body, u.created_by, len(u.photos)])
+        z.writestr("updates.csv", sio.getvalue())
+
+        # people.csv
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        w.writerow(["case_id", "entity_id", "name", "type", "role", "region", "note"])
+        for c in cases:
+            for link in c.links:
+                w.writerow([c.id, link.entity_id,
+                            link.entity.name if link.entity else "",
+                            link.entity.type if link.entity else "",
+                            link.role,
+                            link.entity.region if link.entity else "",
+                            link.note])
+        z.writestr("people.csv", sio.getvalue())
+
+        # analyst_notes.csv
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        w.writerow(["case_id", "id", "category", "title", "body", "created_by", "created_at"])
+        for c in cases:
+            for n in c.analyst_notes:
+                w.writerow([c.id, n.id, n.category, n.title, n.body,
+                            n.created_by, n.created_at.isoformat()])
+        z.writestr("analyst_notes.csv", sio.getvalue())
+
+        # custody.csv
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        w.writerow(["case_id", "id", "when", "action", "detail", "actor", "ip", "entry_hash"])
+        for c in cases:
+            for cl in db.session.execute(
+                db.select(CustodyLog).where(CustodyLog.case_id == c.id).order_by(CustodyLog.id)
+            ).scalars().all():
+                w.writerow([c.id, cl.id, cl.created_at.isoformat(),
+                            cl.action, cl.detail, cl.actor, cl.ip, cl.entry_hash])
+        z.writestr("custody.csv", sio.getvalue())
+
+    return buf.getvalue()
+
+
+def export_kml(cases, user):
+    """KML for Google Earth / Google Maps."""
+    def esc_xml(s):
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<kml xmlns="http://www.opengis.net/kml/2.2">',
+             '<Document>',
+             f'<name>MIS Export</name>',
+             f'<description>Exported {datetime.utcnow().isoformat()}Z by {user.username}</description>']
+
+    # Color by threat
+    colors = {"LOW": "ff50b93f", "MEDIUM": "ff00b0ff",
+              "HIGH": "ff007bff", "CRITICAL": "ff303bff"}  # ABGR order
+
+    # Style for each threat level
+    for level, color in colors.items():
+        lines.append(f'<Style id="threat-{level}">')
+        lines.append('<IconStyle><color>' + color + '</color>'
+                     '<scale>1.1</scale>'
+                     '<Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>'
+                     '</IconStyle></Placemark>'.replace('</Placemark>', ''))
+        lines.append('</Style>')
+
+    # Entities with coordinates
+    entities_seen = set()
+    for c in cases:
+        for link in c.links:
+            e = link.entity
+            if not e or e.id in entities_seen:
+                continue
+            entities_seen.add(e.id)
+            if not e.latitude or not e.longitude:
+                continue
+            lines.append('<Placemark>')
+            lines.append(f'<name>{esc_xml(e.name)}</name>')
+            desc = f"Type: {esc_xml(e.type)}\nRegion: {esc_xml(e.region)}\n"
+            desc += f"Threat: {esc_xml(e.threat_level)}\n"
+            desc += f"Role on case: {esc_xml(link.role)}\n"
+            if link.note:
+                desc += f"Note: {esc_xml(link.note)}\n"
+            lines.append(f'<description>{esc_xml(desc)}</description>')
+            lines.append(f'<styleUrl>#threat-{e.threat_level}</styleUrl>')
+            lines.append(f'<Point><coordinates>{e.longitude},{e.latitude},0</coordinates></Point>')
+            lines.append('</Placemark>')
+
+    lines.append('</Document>')
+    lines.append('</kml>')
+    return "\n".join(lines).encode("utf-8")
+
+
+def export_stix(cases, user):
+    """Minimal STIX 2.1 bundle: each case is an incident, each entity is an identity."""
+    bundle_id = f"bundle--{secrets.token_hex(16)}"
+    objects = []
+    now_iso = datetime.utcnow().isoformat() + "Z"
+
+    for c in cases:
+        # Case = incident
+        incident_id = f"incident--{secrets.token_hex(16)}"
+        objects.append({
+            "type": "incident",
+            "spec_version": "2.1",
+            "id": incident_id,
+            "created": c.created_at.isoformat() + "Z" if c.created_at else now_iso,
+            "modified": now_iso,
+            "name": c.title,
+            "description": f"{c.subject}\n\n{c.notes}"[:1000],
+            "labels": [c.threat_level.lower(), c.status.lower()],
+        })
+        # Entities = identities
+        for link in c.links:
+            e = link.entity
+            if not e:
+                continue
+            ident_id = f"identity--{secrets.token_hex(16)}"
+            objects.append({
+                "type": "identity",
+                "spec_version": "2.1",
+                "id": ident_id,
+                "created": e.created_at.isoformat() + "Z" if e.created_at else now_iso,
+                "modified": now_iso,
+                "name": e.name,
+                "identity_class": e.type.lower(),
+                "description": f"{e.region or ''}\n{link.note}",
+            })
+        # Updates = observed-data
+        for u in c.updates:
+            obs_id = f"observed-data--{secrets.token_hex(16)}"
+            objects.append({
+                "type": "observed-data",
+                "spec_version": "2.1",
+                "id": obs_id,
+                "created": u.created_at.isoformat() + "Z" if u.created_at else now_iso,
+                "modified": now_iso,
+                "first_observed": u.happened_at.isoformat() + "Z",
+                "last_observed": u.happened_at.isoformat() + "Z",
+                "number_observed": 1,
+                "object_refs": [],
+                "description": u.body[:500],
+            })
+
+    bundle = {
+        "type": "bundle",
+        "id": bundle_id,
+        "objects": objects,
+    }
+    return json.dumps(bundle, indent=2, ensure_ascii=False).encode("utf-8")
+
+
+# ============================================================
 # ROUTES — AUTH
 # ============================================================
 @app.route("/", methods=["GET", "POST"])
@@ -1402,7 +1747,13 @@ def login():
             user.failed_attempts = 0
             user.locked_until = None
             user.last_ip = ip
+            # Reset deadman check-in on every real login
+            if user.deadman_enabled:
+                user.deadman_last_checkin = datetime.utcnow()
+                user.deadman_fired_at = None
             db.session.commit()
+            # Fire any overdue switches for OTHER users
+            check_deadman_switches()
             if user.totp_enabled:
                 session["pending_2fa_user"] = user.id
                 session["pending_2fa_kind"] = "real"
@@ -1461,6 +1812,10 @@ def two_factor():
         if user.verify_totp(form.code.data) or user.check_backup_code(form.code.data):
             session.pop("pending_2fa_user", None)
             kind = session.pop("pending_2fa_kind", "real")
+            if user.deadman_enabled:
+                user.deadman_last_checkin = datetime.utcnow()
+                user.deadman_fired_at = None
+                db.session.commit()
             return _complete_login(user, is_duress=(kind == "duress"))
         flash("Invalid code.", "error")
     return render_template("two_factor.html", form=form)
@@ -1510,7 +1865,7 @@ def _enforce_timeouts():
 
 
 # ============================================================
-# DURESS HOME — the decoy page
+# DURESS HOME
 # ============================================================
 @app.route("/duress")
 def duress_home():
@@ -1520,25 +1875,21 @@ def duress_home():
         {"id": -3, "title": "Books to read", "subject": "Personal", "items": 3},
     ]
     fake_recent = [
-        "Nothing new today",
-        "Remember to buy milk",
-        "Meeting moved to 3pm",
-        "Pay electricity bill",
+        "Nothing new today", "Remember to buy milk",
+        "Meeting moved to 3pm", "Pay electricity bill",
     ]
     return render_template("dashboard_duress.html",
-                           fake_cases=fake_cases,
-                           fake_recent=fake_recent)
+                           fake_cases=fake_cases, fake_recent=fake_recent)
 
 
 # ============================================================
-# REAL DASHBOARD
+# DASHBOARD
 # ============================================================
 @app.route("/dashboard")
 @login_required
 def dashboard():
     if is_duress_session():
         return redirect(url_for("duress_home"))
-
     if current_user.role in (ROLE_TOP, ROLE_ANALYST):
         cases = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
     else:
@@ -1546,7 +1897,6 @@ def dashboard():
             db.select(Case).where(Case.assigned_agent_id == current_user.id)
             .order_by(Case.title)
         ).scalars().all()
-
     if current_user.role == ROLE_AGENT:
         recent = []
         for c in cases:
@@ -1557,7 +1907,6 @@ def dashboard():
         recent = db.session.execute(
             db.select(Update).order_by(Update.happened_at.desc()).limit(20)
         ).scalars().all()
-
     stats = {
         "cases": len(cases),
         "updates": db.session.scalar(db.select(db.func.count(Update.id))) or 0,
@@ -1565,17 +1914,19 @@ def dashboard():
         "entities": db.session.scalar(db.select(db.func.count(Entity.id))) or 0,
         "users": db.session.scalar(db.select(db.func.count(User.id))) or 0,
     }
-
     agents = []
     if current_user.role == ROLE_TOP:
         agents = db.session.execute(
             db.select(User).where(User.role == ROLE_AGENT).order_by(User.username)
         ).scalars().all()
-
+    # Dead man's status for banner
+    dm_status = current_user.deadman_status() if current_user.deadman_enabled else "off"
+    dm_days = current_user.deadman_days_left() if current_user.deadman_enabled else 0
     return render_template("dashboard.html", cases=cases, recent=recent,
                            case_choices=case_choices_for(current_user), stats=stats,
                            now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"),
-                           agents=agents)
+                           agents=agents,
+                           dm_status=dm_status, dm_days=dm_days)
 
 
 # ============================================================
@@ -2212,7 +2563,7 @@ def case_entity_delete(link_id):
 
 
 # ============================================================
-# WAVE 1 — RESOLUTION + GRAPH + DEEP SEARCH
+# RESOLUTION / GRAPH / DEEP SEARCH (Wave 1)
 # ============================================================
 def _similarity(name_a, name_b):
     a = name_a.lower().strip()
@@ -2504,7 +2855,7 @@ def deep_search_reindex():
 
 
 # ============================================================
-# WAVE 3 — PATTERN DETECTION
+# PATTERNS / GEO (Wave 3)
 # ============================================================
 @app.route("/patterns")
 @login_required
@@ -2594,9 +2945,6 @@ def patterns():
                            same_region=same_region)
 
 
-# ============================================================
-# WAVE 3 — GEOSPATIAL
-# ============================================================
 @app.route("/geo")
 @login_required
 def geo():
@@ -2805,207 +3153,169 @@ def map_view():
 
 
 # ============================================================
-# BACKUPS / INTEGRITY / USERS
+# WAVE 4 — DEAD MAN'S SWITCH ROUTES
 # ============================================================
-@app.route("/backups")
+@app.route("/settings/deadman", methods=["GET", "POST"])
 @login_required
-@require_role(ROLE_TOP)
-def backups():
+def setup_deadman():
     if is_duress_session():
         return redirect(url_for("duress_home"))
-    rows = db.session.execute(db.select(Backup).order_by(Backup.created_at.desc())).scalars().all()
-    return render_template("backups.html", backups=rows)
-
-
-@app.route("/backups/create", methods=["POST"])
-@login_required
-@require_role(ROLE_TOP)
-def backup_create():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    password = (request.form.get("password") or "").strip()
-    if len(password) < 8:
-        flash("Backup password must be at least 8 characters.", "error")
-        return redirect(url_for("backups"))
-    blob, count = make_encrypted_backup(password)
-    fname = f"MIS_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.misbak"
-    db.session.add(Backup(filename=fname, size_bytes=len(blob),
-                          record_count=count, created_by=current_user.username))
-    db.session.commit()
-    audit("backup_create", fname, actor=current_user.username)
-    resp = send_file(io.BytesIO(blob), mimetype="application/octet-stream",
-                     as_attachment=True, download_name=fname)
-    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
-@app.route("/integrity")
-@login_required
-def integrity():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    issues = []
-    for c in db.session.execute(db.select(Case)).scalars().all():
-        expected = compute_integrity(c)
-        if c.integrity_hash and c.integrity_hash != expected:
-            issues.append(("case", c.id, c.title))
-    for u in db.session.execute(db.select(Update)).scalars().all():
-        expected = compute_integrity(u, extra=(u.body_enc or "")[:32])
-        if u.integrity_hash and u.integrity_hash != expected:
-            issues.append(("update", u.id, (u.body or "")[:40]))
-    return render_template("integrity.html", issues=issues)
-
-
-@app.route("/users", methods=["GET", "POST"])
-@login_required
-@require_role(ROLE_TOP)
-def users():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    form = UserForm()
-    if form.validate_on_submit():
-        uname = form.username.data.strip()
-        if db.session.execute(db.select(User).filter_by(username=uname)).scalar():
-            flash("Username taken.", "error")
-        else:
-            u = User(username=uname, codename=form.codename.data or "",
-                     email=form.email.data or "", role=form.role.data)
-            u.set_password(form.password.data)
-            db.session.add(u)
-            db.session.commit()
-            audit("user_create", f"{uname} ({form.role.data})", actor=current_user.username)
-            flash("User created.", "success")
-            return redirect(url_for("users"))
-    rows = db.session.execute(db.select(User).order_by(User.created_at)).scalars().all()
-    return render_template("users.html", form=form, users=rows)
-
-
-@app.route("/users/<int:uid>/delete", methods=["POST"])
-@login_required
-@require_role(ROLE_TOP)
-def user_delete(uid):
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    if uid == current_user.id:
-        flash("Cannot delete yourself.", "error")
-        return redirect(url_for("users"))
-    u = db.session.get(User, uid) or abort(404)
-    db.session.delete(u)
-    db.session.commit()
-    return redirect(url_for("users"))
-
-
-# ============================================================
-# SETTINGS — password / 2fa / duress / sessions
-# ============================================================
-@app.route("/settings/password", methods=["GET", "POST"])
-@login_required
-def change_password():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    form = ChangePasswordForm()
-    if form.validate_on_submit():
-        if not current_user.check_password(form.current.data):
-            flash("Current password is incorrect.", "error")
-        else:
-            current_user.set_password(form.new.data)
-            db.session.commit()
-            audit("password_change", current_user.username, actor=current_user.username)
-            flash("Password updated.", "success")
-            return redirect(url_for("dashboard"))
-    return render_template("change_password.html", form=form)
-
-
-@app.route("/settings/2fa", methods=["GET", "POST"])
-@login_required
-def setup_2fa():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    if not current_user.totp_secret:
-        current_user.totp_secret = pyotp.random_base32()
-        db.session.commit()
-    otp_uri = pyotp.TOTP(current_user.totp_secret).provisioning_uri(
-        name=current_user.username, issuer_name="MIS")
-    form = Setup2FAForm()
-    backup_codes = None
-    if form.validate_on_submit():
-        if pyotp.TOTP(current_user.totp_secret).verify(form.code.data.strip(), valid_window=1):
-            current_user.totp_enabled = True
-            backup_codes = current_user.generate_backup_codes()
-            db.session.commit()
-            audit("2fa_enabled", current_user.username, actor=current_user.username)
-            flash("2FA enabled.", "success")
-        else:
-            flash("Invalid code.", "error")
-    return render_template("setup_2fa.html", form=form,
-                           secret=current_user.totp_secret, otp_uri=otp_uri,
-                           enabled=current_user.totp_enabled, backup_codes=backup_codes)
-
-
-@app.route("/settings/2fa/disable", methods=["POST"])
-@login_required
-def disable_2fa():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    current_user.totp_enabled = False
-    current_user.backup_codes = ""
-    db.session.commit()
-    flash("2FA disabled.", "success")
-    return redirect(url_for("setup_2fa"))
-
-
-@app.route("/settings/duress", methods=["GET", "POST"])
-@login_required
-def setup_duress():
-    if is_duress_session():
-        return redirect(url_for("duress_home"))
-    form = DuressForm()
+    form = DeadManForm()
     if form.validate_on_submit():
         if not current_user.check_password(form.current_password.data):
             flash("Current password is incorrect.", "error")
         else:
-            dp = (form.duress_password.data or "").strip()
-            if dp and len(dp) < 6:
-                flash("Duress password must be at least 6 characters.", "error")
-            else:
-                current_user.set_duress(dp)
-                current_user.duress_contact = (form.duress_contact.data or "").strip()
-                db.session.commit()
-                audit("duress_updated",
-                      f"duress {'set' if dp else 'cleared'}",
-                      actor=current_user.username)
-                flash("Duress settings updated.", "success")
-                return redirect(url_for("dashboard"))
+            current_user.deadman_enabled = form.enabled.data
+            current_user.deadman_days = max(1, form.days.data or 7)
+            current_user.deadman_message = form.message.data or ""
+            if form.enabled.data:
+                current_user.deadman_last_checkin = datetime.utcnow()
+                current_user.deadman_fired_at = None
+            db.session.commit()
+            audit("deadman_updated",
+                  f"{'enabled' if form.enabled.data else 'disabled'} ({current_user.deadman_days}d)",
+                  actor=current_user.username)
+            flash("Dead Man's Switch saved.", "success")
+            return redirect(url_for("dashboard"))
     else:
-        form.duress_contact.data = current_user.duress_contact or ""
-    return render_template("setup_duress.html", form=form,
-                           has_duress=bool(current_user.duress_hash),
-                           contact=current_user.duress_contact)
+        form.enabled.data = current_user.deadman_enabled
+        form.days.data = current_user.deadman_days or 7
+        form.message.data = current_user.deadman_message or ""
+    return render_template("setup_deadman.html", form=form,
+                           configured=bool(app.config.get("TELEGRAM_BOT_TOKEN")),
+                           status=current_user.deadman_status(),
+                           last=current_user.deadman_last_checkin,
+                           days_left=current_user.deadman_days_left(),
+                           contact=app.config.get("TELEGRAM_CHAT_ID", ""))
 
 
-@app.route("/settings/sessions", methods=["GET", "POST"])
+@app.route("/settings/deadman/checkin", methods=["POST"])
 @login_required
-def my_sessions():
+def deadman_checkin():
     if is_duress_session():
         return redirect(url_for("duress_home"))
+    current_user.deadman_last_checkin = datetime.utcnow()
+    current_user.deadman_fired_at = None
+    db.session.commit()
+    audit("deadman_checkin", current_user.username, actor=current_user.username)
+    flash("Checked in. Timer reset.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/settings/deadman/test", methods=["POST"])
+@login_required
+def deadman_test():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    ok = send_telegram_alert(
+        f"🧪 Test alert from MIS.\n"
+        f"If you receive this, your Dead Man's Switch is wired correctly.\n"
+        f"User: {current_user.username}"
+    )
+    if ok:
+        flash("Test alert sent to Telegram.", "success")
+    else:
+        flash("Telegram not configured, or send failed. Check env vars.", "error")
+    return redirect(url_for("setup_deadman"))
+
+
+# ============================================================
+# WAVE 4 — STRUCTURED EXPORTS
+# ============================================================
+@app.route("/exports", methods=["GET", "POST"])
+@login_required
+def exports():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    form = ExportForm()
+    form.case_id.choices = [(0, "— none —")] + case_choices_for(current_user)
+    if form.validate_on_submit():
+        # Determine cases
+        if form.scope.data == "single" and form.case_id.data:
+            c = db.session.get(Case, form.case_id.data)
+            if not c or not can_view_case(current_user, c):
+                abort(403)
+            cases = [c]
+        else:
+            if current_user.role in (ROLE_TOP, ROLE_ANALYST):
+                cases = db.session.execute(db.select(Case).order_by(Case.title)).scalars().all()
+            else:
+                cases = db.session.execute(
+                    db.select(Case).where(Case.assigned_agent_id == current_user.id)
+                ).scalars().all()
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fmt = form.format.data
+
+        if fmt == "json":
+            data = export_json(cases, current_user)
+            fname = f"MIS_export_{stamp}.json"
+            mimetype = "application/json"
+        elif fmt == "csv":
+            data = export_csv_zip(cases, current_user)
+            fname = f"MIS_export_{stamp}.zip"
+            mimetype = "application/zip"
+        elif fmt == "kml":
+            data = export_kml(cases, current_user)
+            fname = f"MIS_export_{stamp}.kml"
+            mimetype = "application/vnd.google-earth.kml+xml"
+        elif fmt == "stix":
+            data = export_stix(cases, current_user)
+            fname = f"MIS_export_{stamp}_stix.json"
+            mimetype = "application/json"
+        else:
+            flash("Unknown format.", "error")
+            return redirect(url_for("exports"))
+
+        audit("export", f"{fmt} of {len(cases)} cases", actor=current_user.username)
+        resp = send_file(io.BytesIO(data), mimetype=mimetype,
+                         as_attachment=True, download_name=fname)
+        resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    return render_template("exports.html", form=form)
+
+
+# ============================================================
+# WAVE 4 — API KEYS
+# ============================================================
+@app.route("/settings/api-keys", methods=["GET", "POST"])
+@login_required
+@require_role(ROLE_TOP)
+def api_keys():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    new_key = None
     if request.method == "POST":
-        sid = session.get("sid")
-        rows = db.session.execute(
-            db.select(SessionRecord).where(SessionRecord.user_id == current_user.id)
-        ).scalars().all()
-        for r in rows:
-            if r.session_id != sid:
-                r.revoked = True
+        label = (request.form.get("label") or "").strip()
+        role = request.form.get("role") or ROLE_ANALYST
+        if role not in (ROLE_TOP, ROLE_AGENT, ROLE_ANALYST):
+            role = ROLE_ANALYST
+        raw = "mis_" + secrets.token_urlsafe(24)
+        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        db.session.add(APIKey(key_hash=key_hash, label=label, role=role,
+                              created_by=current_user.username))
         db.session.commit()
-        flash("Other sessions revoked.", "success")
-        return redirect(url_for("my_sessions"))
+        audit("api_key_create", f"{label} ({role})", actor=current_user.username)
+        new_key = raw
+        flash("API key created. Copy it now — it won't be shown again.", "success")
     rows = db.session.execute(
-        db.select(SessionRecord).where(SessionRecord.user_id == current_user.id,
-                                       SessionRecord.revoked == False)
-        .order_by(SessionRecord.last_seen.desc())
+        db.select(APIKey).where(APIKey.revoked == False).order_by(APIKey.created_at.desc())
     ).scalars().all()
-    return render_template("sessions.html", sessions=rows, current_sid=session.get("sid"))
+    return render_template("api_keys.html", keys=rows, new_key=new_key)
+
+
+@app.route("/settings/api-keys/<int:kid>/revoke", methods=["POST"])
+@login_required
+@require_role(ROLE_TOP)
+def api_key_revoke(kid):
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    k = db.session.get(APIKey, kid) or abort(404)
+    k.revoked = True
+    db.session.commit()
+    flash("API key revoked.", "success")
+    return redirect(url_for("api_keys"))
 
 
 # ============================================================
@@ -3026,6 +3336,11 @@ def service_worker():
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Service-Worker-Allowed"] = "/"
     return resp
+
+
+@app.route("/offline")
+def offline():
+    return render_template("offline.html")
 
 
 # ============================================================
@@ -3068,6 +3383,7 @@ def bootstrap():
                 c.key_rotated_at = datetime.utcnow()
         db.session.commit()
         print("✅ Case keys ensured")
+        print(f"✅ Telegram configured: {bool(app.config.get('TELEGRAM_BOT_TOKEN'))}")
 
 
 bootstrap()

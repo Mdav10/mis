@@ -74,6 +74,11 @@
         <a href="{{ url_for('duress_home') }}" class="menu-link">ℹ About</a>
       {% endif %}
 
+      <a href="{{ url_for('setup_deadman') }}" class="menu-link">☠ Dead Man's Switch</a>
+        <a href="{{ url_for('exports') }}" class="menu-link">📤 Exports</a>
+        {% if current_user.role == 'top_secret' %}
+        <a href="{{ url_for('api_keys') }}" class="menu-link">🔑 API Keys</a>
+        {% endif %}
       <a href="{{ url_for('logout') }}" class="logout-link menu-link">⏻ Log Out</a>
     </div>
   </div>
