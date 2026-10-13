@@ -3,7 +3,7 @@
 # Base: v16 (Wave 1 working)
 # ============================================================
 
-import os, io, json, hmac, hashlib, secrets, base64, re, subprocess, tempfile
+import os, io, json, hmac, hashlib, secrets, base64, re, subprocess, tempfile, threading
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -783,6 +783,46 @@ def transcribe_audio(audio_bytes, mime_hint="audio/webm"):
                     os.remove(p)
             except Exception:
                 pass
+
+
+
+
+# ============================================================
+# BACKGROUND TRANSCRIPTION
+# ============================================================
+def _bg_transcribe(app_ctx, media_id, case_id):
+    """Run transcription in a background thread with its own app context."""
+    with app_ctx:
+        try:
+            from app import db as _db, UpdateMedia as _UM
+            m = _db.session.get(_UM, media_id)
+            if not m or m.transcript:
+                return
+            if not m.data or len(m.data) < 100:
+                # Too small — probably empty
+                m.transcript = "[empty or too short]"
+                m.transcribed_at = datetime.utcnow()
+                _db.session.commit()
+                return
+            txt = transcribe_audio(m.data, m.mimetype or "audio/webm")
+            m.transcript = txt or "[transcription failed]"
+            m.transcribed_at = datetime.utcnow()
+            _db.session.commit()
+            if txt:
+                index_text("voice", m.id, txt, case_id=case_id)
+                _db.session.commit()
+        except Exception as e:
+            print(f"⚠️  background transcription failed: {e}")
+
+
+def spawn_transcription(media_id, case_id):
+    """Fire and forget — transcription never blocks the request."""
+    try:
+        ctx = app.app_context()
+        t = threading.Thread(target=_bg_transcribe, args=(ctx, media_id, case_id), daemon=True)
+        t.start()
+    except Exception as e:
+        print(f"⚠️  could not spawn transcription: {e}")
 
 
 # ============================================================
@@ -1608,19 +1648,10 @@ def quick_add():
 
     db.session.commit()
 
-    # Transcribe voice memos in the background (synchronous, best-effort)
+    # Spawn background transcription — never blocks the request
     for m in u.photos:
-        if m.kind == "voice" and not m.transcript:
-            try:
-                txt = transcribe_audio(m.data, m.mimetype or "audio/webm")
-                if txt:
-                    m.transcript = txt
-                    m.transcribed_at = datetime.utcnow()
-                    db.session.add(m)
-                    index_text("voice", m.id, txt, case_id=case.id)
-                    db.session.commit()
-            except Exception as e:
-                print(f"⚠️  transcription failed: {e}")
+        if m.kind == "voice":
+            spawn_transcription(m.id, case.id)
 
     custody(case.id, "EDIT", f"Added entry: {body[:60]}")
     audit("update_add", f"Case #{u.case_id}: {body[:40]}", actor=current_user.username)
@@ -1639,16 +1670,9 @@ def media_transcribe(mid):
     if m.kind != "voice":
         flash("Only voice memos can be transcribed.", "error")
         return redirect(request.referrer or url_for("dashboard"))
-    txt = transcribe_audio(m.data, m.mimetype or "audio/webm")
-    m.transcript = txt or ""
-    m.transcribed_at = datetime.utcnow()
-    db.session.commit()
-    if txt:
-        index_text("voice", m.id, txt, case_id=m.update.case.id)
-        db.session.commit()
-        flash("Transcribed.", "success")
-    else:
-        flash("Could not transcribe. Audio may be unclear.", "error")
+    # Fire and forget
+    spawn_transcription(m.id, m.update.case.id)
+    flash("Transcription started. Refresh in a few seconds.", "success")
     return redirect(request.referrer or url_for("dashboard"))
 
 
@@ -1697,10 +1721,14 @@ def case_detail(cid):
         abort(403)
 
     # Ensure old cases get a key if they don't have one
-    if not c.case_key_wrapped:
-        c.case_key_wrapped = wrap_case_key(new_case_key())
-        c.key_rotated_at = datetime.utcnow()
-        db.session.commit()
+    try:
+        if not c.case_key_wrapped:
+            c.case_key_wrapped = wrap_case_key(new_case_key())
+            c.key_rotated_at = datetime.utcnow()
+            db.session.commit()
+    except Exception as e:
+        print(f"⚠️  key backfill failed: {e}")
+        db.session.rollback()
 
     # Log the view (once per session per case)
     viewed_key = f"viewed_case_{cid}"
@@ -1984,17 +2012,16 @@ def update_edit(uid):
                             db.session.add(m)
                             db.session.flush()
                             if kind == "voice":
-                                try:
-                                    txt = transcribe_audio(raw, f.mimetype or "audio/webm")
-                                    if txt:
-                                        m.transcript = txt
-                                        m.transcribed_at = datetime.utcnow()
-                                        index_text("voice", m.id, txt, case_id=u.case_id)
-                                except Exception as e:
-                                    print(f"⚠️  transcription failed: {e}")
+                                m_id = m.id
+                                u_cid = u.case_id
+                                # defer to background after commit
         u.integrity_hash = compute_integrity(u, extra=u.body_enc[:32])
         index_text("update", u.id, u.body, case_id=u.case_id)
         db.session.commit()
+        # Spawn background transcription for any new voice memos
+        for m in u.photos:
+            if m.kind == "voice" and not m.transcript:
+                spawn_transcription(m.id, u.case_id)
         custody(u.case_id, "EDIT", f"Entry updated: {u.body[:60]}")
         flash("Entry updated.", "success")
         return redirect(url_for("case_detail", cid=u.case_id))
