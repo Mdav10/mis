@@ -15,6 +15,8 @@
 <section class="card highlight" id="vault-create-card">
   <h2>◆ Seal New Vault Note</h2>
   <form id="vaultForm" onsubmit="return false;">
+    <input type="hidden" id="vCsrf" name="csrf_token" value="{{ csrf_token() }}">
+
     <label>Label (visible to server, max 120 chars)</label>
     <input id="vLabel" maxlength="120" placeholder="e.g. Source-1 real identity">
     <label>Title (encrypted)</label>
@@ -33,7 +35,7 @@
     <p class="dim" style="margin-top:6px;">
       ⚠ Remember this password. If you forget it, this note becomes unrecoverable.
     </p>
-    <button class="primary big" onclick="sealNote()">🔒 Seal &amp; Upload</button>
+    <button class="primary big" type="button" onclick="sealNote()">🔒 Seal &amp; Upload</button>
     <p id="vaultMsg" class="dim" style="margin-top:8px;"></p>
   </form>
 </section>
@@ -41,10 +43,11 @@
 <section class="card">
   <h2>🔓 Open Existing Note</h2>
   <form id="openForm" onsubmit="return false;">
+    <label>Vault note ID</label>
+    <input id="oId" type="number" min="1" placeholder="e.g. 3">
     <label>Vault password</label>
     <input id="oPassword" type="password" autocomplete="current-password">
-    <button class="primary" onclick="openNoteFromId()" style="margin-top:8px;">Open by ID</button>
-    <input id="oId" type="number" min="1" placeholder="Vault note ID" style="max-width:140px;display:inline-block;margin-left:8px;">
+    <button class="primary" type="button" onclick="openNoteFromId()">Open by ID</button>
   </form>
 </section>
 
@@ -62,7 +65,7 @@
         {% endif %}
         <div class="dim">Sealed {{ n.created_at.strftime('%Y-%m-%d %H:%M') }} by {{ n.created_by }}</div>
       </div>
-      <button class="small" onclick="promptOpen({{ n.id }})">🔓 Open</button>
+      <button class="small" type="button" onclick="promptOpen({{ n.id }})">🔓 Open</button>
       <form method="POST" action="{{ url_for('vault_delete', nid=n.id) }}"
             onsubmit="return confirm('Destroy this vault note? It cannot be recovered.');"
             style="display:inline">
@@ -80,15 +83,15 @@
 <section class="card highlight" id="decryptedCard" style="display:none;">
   <h2>▣ Decrypted Content</h2>
   <div id="decryptedContent"></div>
-  <button class="primary" onclick="closeDecrypted()" style="margin-top:12px;">Close</button>
-  <button class="link-btn" onclick="copyDecrypted()" style="margin-top:12px;">Copy to clipboard</button>
+  <button class="primary" type="button" onclick="closeDecrypted()" style="margin-top:12px;">Close</button>
+  <button class="link-btn" type="button" onclick="copyDecrypted()" style="margin-top:12px;">Copy to clipboard</button>
 </section>
 
 <script>
 // ============================================================
 // Zero-knowledge vault — client-side AES-GCM encryption
 // ============================================================
-const VAULT_MAGIC = "MV1\0";  // 4 bytes: M V 1 \0
+const VAULT_MAGIC = "MV1\u0000";
 
 function b64encode(buf) {
   let bytes = new Uint8Array(buf);
@@ -105,18 +108,12 @@ function b64decode(str) {
 }
 
 async function deriveKey(password, salt) {
-  // PBKDF2-SHA256, 200k iterations, 32-byte AES-256 key
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey(
     "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
   );
   return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: salt,
-      iterations: 200000,
-      hash: "SHA-256"
-    },
+    { name: "PBKDF2", salt: salt, iterations: 200000, hash: "SHA-256" },
     baseKey,
     { name: "AES-GCM", length: 256 },
     false,
@@ -134,7 +131,6 @@ async function encryptString(plaintext, password) {
     key,
     enc.encode(plaintext)
   );
-  // Combine magic + salt + iv + ciphertext
   const magicBytes = enc.encode(VAULT_MAGIC);
   const out = new Uint8Array(magicBytes.length + 16 + 12 + ct.byteLength);
   out.set(magicBytes, 0);
@@ -147,7 +143,6 @@ async function encryptString(plaintext, password) {
 async function decryptString(b64, password) {
   const enc = new TextEncoder();
   const blob = b64decode(b64);
-  // Verify magic
   const magicBytes = enc.encode(VAULT_MAGIC);
   for (let i = 0; i < magicBytes.length; i++) {
     if (blob[i] !== magicBytes[i]) throw new Error("Not a vault blob");
@@ -169,9 +164,10 @@ async function sealNote() {
   const msg = document.getElementById('vaultMsg');
   const label = document.getElementById('vLabel').value.trim();
   const title = document.getElementById('vTitle').value.trim();
-  const body = document.getElementById('vBody').value.trim();
-  const pw = document.getElementById('vPassword').value;
-  const cid = document.getElementById('vCase').value;
+  const body  = document.getElementById('vBody').value.trim();
+  const pw    = document.getElementById('vPassword').value;
+  const cid   = document.getElementById('vCase').value;
+  const csrf  = document.getElementById('vCsrf').value;
 
   if (!body) { msg.textContent = 'Body is required.'; return; }
   if (!pw || pw.length < 8) { msg.textContent = 'Password must be at least 8 characters.'; return; }
@@ -179,10 +175,9 @@ async function sealNote() {
   msg.textContent = '🔒 Encrypting locally...';
   try {
     const title_enc = title ? await encryptString(title, pw) : '';
-    const body_enc = await encryptString(body, pw);
+    const body_enc  = await encryptString(body, pw);
 
     msg.textContent = '⬆ Uploading encrypted blob...';
-    const csrf = document.querySelector('input[name="csrf_token"]').value;
     const form = new FormData();
     form.append('csrf_token', csrf);
     form.append('label', label);
@@ -195,10 +190,13 @@ async function sealNote() {
       msg.textContent = '✅ Sealed. Reloading...';
       setTimeout(() => location.href = '/vault', 500);
     } else {
-      msg.textContent = '❌ Upload failed.';
+      const txt = await resp.text();
+      msg.textContent = '❌ Upload failed (' + resp.status + ')';
+      console.error(txt);
     }
   } catch (e) {
     msg.textContent = '❌ ' + e.message;
+    console.error(e);
   }
 }
 
@@ -212,13 +210,13 @@ async function openNote(id, password) {
     if (!r.ok) { alert('Cannot read note.'); return; }
     const data = await r.json();
     const title = data.title_enc ? await decryptString(data.title_enc, password) : '';
-    const body = await decryptString(data.body_enc, password);
+    const body  = await decryptString(data.body_enc, password);
     const card = document.getElementById('decryptedCard');
     const content = document.getElementById('decryptedContent');
     content.innerHTML = `
       <div style="background:#000;border:1px solid var(--amber);border-radius:6px;padding:16px;">
         <div style="color:var(--amber);font-weight:700;letter-spacing:1px;">#${data.id} ${escapeHtml(title || '(no title)')}</div>
-        <div class="dim" style="margin:6px 0;">${data.label || ''} · sealed ${data.created_at}</div>
+        <div class="dim" style="margin:6px 0;">${escapeHtml(data.label || '')} · sealed ${escapeHtml(data.created_at)}</div>
         <pre style="white-space:pre-wrap;word-break:break-word;font-family:var(--mono);color:var(--text);margin-top:10px;">${escapeHtml(body)}</pre>
       </div>
     `;
@@ -227,12 +225,11 @@ async function openNote(id, password) {
     card.dataset.plaintext = (title ? title + '\\n\\n' : '') + body;
   } catch (e) {
     alert('❌ Decryption failed — wrong password or corrupted note.');
+    console.error(e);
   }
 }
 
-function promptOpen(id) {
-  openNote(id);
-}
+function promptOpen(id) { openNote(id); }
 
 function openNoteFromId() {
   const id = document.getElementById('oId').value;
@@ -249,7 +246,9 @@ function closeDecrypted() {
 
 function copyDecrypted() {
   const txt = document.getElementById('decryptedCard').dataset.plaintext || '';
-  navigator.clipboard.writeText(txt);
+  navigator.clipboard.writeText(txt).then(() => {
+    alert('✓ Copied');
+  }).catch(() => alert('Copy failed'));
 }
 
 function escapeHtml(s) {
