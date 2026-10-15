@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block title %}Vault{% endblock %}
+{% block content %}
+<h1>🔐 Zero-Knowledge Vault</h1>
+
+<section class="card">
+  <h2>What this is</h2>
+  <p class="dim">
+    Notes here are encrypted <b>in your browser</b> before they leave your device.
+    The server stores only ciphertext. Even the server admin cannot read them.
+    The password you type is never sent — if you lose it, the note is unrecoverable.
+  </p>
+</section>
+
+<section class="card highlight" id="vault-create-card">
+  <h2>◆ Seal New Vault Note</h2>
+  <form id="vaultForm" onsubmit="return false;">
+    <label>Label (visible to server, max 120 chars)</label>
+    <input id="vLabel" maxlength="120" placeholder="e.g. Source-1 real identity">
+    <label>Title (encrypted)</label>
+    <input id="vTitle" placeholder="Short title — will be encrypted">
+    <label>Body (encrypted)</label>
+    <textarea id="vBody" rows="6" placeholder="Full note — will be encrypted in your browser before upload"></textarea>
+    <label>Related case (optional)</label>
+    <select id="vCase">
+      <option value="">— none —</option>
+      {% for cid, title in case_choices %}
+        <option value="{{ cid }}">{{ title }}</option>
+      {% endfor %}
+    </select>
+    <label>Vault password (never sent to server)</label>
+    <input id="vPassword" type="password" autocomplete="new-password" placeholder="Choose a strong password">
+    <p class="dim" style="margin-top:6px;">
+      ⚠ Remember this password. If you forget it, this note becomes unrecoverable.
+    </p>
+    <button class="primary big" onclick="sealNote()">🔒 Seal &amp; Upload</button>
+    <p id="vaultMsg" class="dim" style="margin-top:8px;"></p>
+  </form>
+</section>
+
+<section class="card">
+  <h2>🔓 Open Existing Note</h2>
+  <form id="openForm" onsubmit="return false;">
+    <label>Vault password</label>
+    <input id="oPassword" type="password" autocomplete="current-password">
+    <button class="primary" onclick="openNoteFromId()" style="margin-top:8px;">Open by ID</button>
+    <input id="oId" type="number" min="1" placeholder="Vault note ID" style="max-width:140px;display:inline-block;margin-left:8px;">
+  </form>
+</section>
+
+<section class="card">
+  <h2>◆ Sealed Notes ({{ notes|length }})</h2>
+  {% if notes %}
+  <ul class="list">
+    {% for n in notes %}
+    <li>
+      <div style="flex:1 1 100%;">
+        <b style="color:var(--amber)">#{{ n.id }}</b>
+        <span style="color:var(--text);">{{ n.label or '(unlabeled)' }}</span>
+        {% if n.case %}
+          <span class="badge">Case: {{ n.case.title }}</span>
+        {% endif %}
+        <div class="dim">Sealed {{ n.created_at.strftime('%Y-%m-%d %H:%M') }} by {{ n.created_by }}</div>
+      </div>
+      <button class="small" onclick="promptOpen({{ n.id }})">🔓 Open</button>
+      <form method="POST" action="{{ url_for('vault_delete', nid=n.id) }}"
+            onsubmit="return confirm('Destroy this vault note? It cannot be recovered.');"
+            style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="danger-btn">✕</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dim">No vault notes sealed yet.</p>
+  {% endif %}
+</section>
+
+<section class="card highlight" id="decryptedCard" style="display:none;">
+  <h2>▣ Decrypted Content</h2>
+  <div id="decryptedContent"></div>
+  <button class="primary" onclick="closeDecrypted()" style="margin-top:12px;">Close</button>
+  <button class="link-btn" onclick="copyDecrypted()" style="margin-top:12px;">Copy to clipboard</button>
+</section>
+
+<script>
+// ============================================================
+// Zero-knowledge vault — client-side AES-GCM encryption
+// ============================================================
+const VAULT_MAGIC = "MV1\0";  // 4 bytes: M V 1 \0
+
+function b64encode(buf) {
+  let bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function b64decode(str) {
+  let bin = atob(str);
+  let bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function deriveKey(password, salt) {
+  // PBKDF2-SHA256, 200k iterations, 32-byte AES-256 key
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey(
+    "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: 200000,
+      hash: "SHA-256"
+    },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptString(plaintext, password) {
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv, additionalData: enc.encode(VAULT_MAGIC) },
+    key,
+    enc.encode(plaintext)
+  );
+  // Combine magic + salt + iv + ciphertext
+  const magicBytes = enc.encode(VAULT_MAGIC);
+  const out = new Uint8Array(magicBytes.length + 16 + 12 + ct.byteLength);
+  out.set(magicBytes, 0);
+  out.set(salt, magicBytes.length);
+  out.set(iv, magicBytes.length + 16);
+  out.set(new Uint8Array(ct), magicBytes.length + 16 + 12);
+  return b64encode(out);
+}
+
+async function decryptString(b64, password) {
+  const enc = new TextEncoder();
+  const blob = b64decode(b64);
+  // Verify magic
+  const magicBytes = enc.encode(VAULT_MAGIC);
+  for (let i = 0; i < magicBytes.length; i++) {
+    if (blob[i] !== magicBytes[i]) throw new Error("Not a vault blob");
+  }
+  const salt = blob.slice(magicBytes.length, magicBytes.length + 16);
+  const iv = blob.slice(magicBytes.length + 16, magicBytes.length + 16 + 12);
+  const ct = blob.slice(magicBytes.length + 16 + 12);
+  const key = await deriveKey(password, salt);
+  const pt = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv, additionalData: enc.encode(VAULT_MAGIC) },
+    key,
+    ct
+  );
+  return new TextDecoder().decode(pt);
+}
+
+// ---------- UI glue ----------
+async function sealNote() {
+  const msg = document.getElementById('vaultMsg');
+  const label = document.getElementById('vLabel').value.trim();
+  const title = document.getElementById('vTitle').value.trim();
+  const body = document.getElementById('vBody').value.trim();
+  const pw = document.getElementById('vPassword').value;
+  const cid = document.getElementById('vCase').value;
+
+  if (!body) { msg.textContent = 'Body is required.'; return; }
+  if (!pw || pw.length < 8) { msg.textContent = 'Password must be at least 8 characters.'; return; }
+
+  msg.textContent = '🔒 Encrypting locally...';
+  try {
+    const title_enc = title ? await encryptString(title, pw) : '';
+    const body_enc = await encryptString(body, pw);
+
+    msg.textContent = '⬆ Uploading encrypted blob...';
+    const csrf = document.querySelector('input[name="csrf_token"]').value;
+    const form = new FormData();
+    form.append('csrf_token', csrf);
+    form.append('label', label);
+    form.append('title_enc', title_enc);
+    form.append('body_enc', body_enc);
+    form.append('case_id', cid);
+
+    const resp = await fetch('/vault/create', { method: 'POST', body: form });
+    if (resp.redirected || resp.ok) {
+      msg.textContent = '✅ Sealed. Reloading...';
+      setTimeout(() => location.href = '/vault', 500);
+    } else {
+      msg.textContent = '❌ Upload failed.';
+    }
+  } catch (e) {
+    msg.textContent = '❌ ' + e.message;
+  }
+}
+
+async function openNote(id, password) {
+  if (!password) {
+    password = prompt('Vault password:');
+    if (!password) return;
+  }
+  try {
+    const r = await fetch('/vault/' + id + '/view');
+    if (!r.ok) { alert('Cannot read note.'); return; }
+    const data = await r.json();
+    const title = data.title_enc ? await decryptString(data.title_enc, password) : '';
+    const body = await decryptString(data.body_enc, password);
+    const card = document.getElementById('decryptedCard');
+    const content = document.getElementById('decryptedContent');
+    content.innerHTML = `
+      <div style="background:#000;border:1px solid var(--amber);border-radius:6px;padding:16px;">
+        <div style="color:var(--amber);font-weight:700;letter-spacing:1px;">#${data.id} ${escapeHtml(title || '(no title)')}</div>
+        <div class="dim" style="margin:6px 0;">${data.label || ''} · sealed ${data.created_at}</div>
+        <pre style="white-space:pre-wrap;word-break:break-word;font-family:var(--mono);color:var(--text);margin-top:10px;">${escapeHtml(body)}</pre>
+      </div>
+    `;
+    card.style.display = 'block';
+    card.scrollIntoView({ behavior: 'smooth' });
+    card.dataset.plaintext = (title ? title + '\\n\\n' : '') + body;
+  } catch (e) {
+    alert('❌ Decryption failed — wrong password or corrupted note.');
+  }
+}
+
+function promptOpen(id) {
+  openNote(id);
+}
+
+function openNoteFromId() {
+  const id = document.getElementById('oId').value;
+  const pw = document.getElementById('oPassword').value;
+  if (!id) { alert('Enter a note ID.'); return; }
+  openNote(id, pw);
+}
+
+function closeDecrypted() {
+  document.getElementById('decryptedCard').style.display = 'none';
+  document.getElementById('decryptedContent').innerHTML = '';
+  document.getElementById('decryptedCard').dataset.plaintext = '';
+}
+
+function copyDecrypted() {
+  const txt = document.getElementById('decryptedCard').dataset.plaintext || '';
+  navigator.clipboard.writeText(txt);
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+</script>
+{% endblock %}

@@ -679,6 +679,26 @@ class Backup(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class VaultNote(db.Model):
+    """Zero-knowledge encrypted notes.
+
+    The client encrypts the title and body with a password typed in the
+    browser. Only the ciphertext blob reaches the server. The server never
+    holds the key and cannot decrypt these notes — not even its own admin.
+    """
+    __tablename__ = "mis_vault_notes"
+    id = db.Column(db.Integer, primary_key=True)
+    case_id = db.Column(db.Integer, db.ForeignKey("mis_cases.id"), nullable=True)
+    title_enc = db.Column(db.Text, default="")   # base64( MAGIC|salt|iv|ct+tag )
+    body_enc = db.Column(db.Text, default="")
+    label = db.Column(db.String(120), default="")  # short non-secret hint
+    created_by = db.Column(db.String(80), default="system")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    case = db.relationship("Case", backref="vault_notes")
+
+
 class SearchIndex(db.Model):
     __tablename__ = "mis_search_index"
     id = db.Column(db.Integer, primary_key=True)
@@ -3526,6 +3546,101 @@ def api_key_revoke(kid):
     db.session.commit()
     flash("API key revoked.", "success")
     return redirect(url_for("api_keys"))
+
+
+# ============================================================
+# ZERO-KNOWLEDGE VAULT
+# ============================================================
+@app.route("/vault")
+@login_required
+def vault_home():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    if current_user.role in (ROLE_TOP, ROLE_ANALYST):
+        notes = db.session.execute(
+            db.select(VaultNote).order_by(VaultNote.created_at.desc())
+        ).scalars().all()
+    else:
+        case_ids = db.session.execute(
+            db.select(Case.id).where(Case.assigned_agent_id == current_user.id)
+        ).scalars().all()
+        notes = db.session.execute(
+            db.select(VaultNote).where(
+                or_(VaultNote.case_id.in_(case_ids), VaultNote.case_id == None)
+            ).order_by(VaultNote.created_at.desc())
+        ).scalars().all()
+    return render_template("vault.html", notes=notes,
+                           case_choices=case_choices_for(current_user),
+                           now_local_str=datetime.now().strftime("%Y-%m-%dT%H:%M"))
+
+
+@app.route("/vault/create", methods=["POST"])
+@login_required
+def vault_create():
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    title_enc = (request.form.get("title_enc") or "").strip()
+    body_enc  = (request.form.get("body_enc") or "").strip()
+    label     = (request.form.get("label") or "").strip()[:120]
+    if not body_enc:
+        flash("Encrypted body is required.", "error")
+        return redirect(url_for("vault_home"))
+    cid = request.form.get("case_id", type=int) or None
+    if cid:
+        c = db.session.get(Case, cid)
+        if not c or not can_view_case(current_user, c):
+            abort(403)
+    note = VaultNote(
+        case_id=cid,
+        title_enc=title_enc,
+        body_enc=body_enc,
+        label=label,
+        created_by=current_user.username,
+    )
+    db.session.add(note)
+    db.session.commit()
+    audit("vault_note_create", f"note #{note.id} · {label}", actor=current_user.username)
+    if cid:
+        custody(cid, "EDIT", f"Vault note added: {label or '(unlabeled)'}")
+    flash("Vault note sealed.", "success")
+    return redirect(url_for("vault_home"))
+
+
+@app.route("/vault/<int:nid>/delete", methods=["POST"])
+@login_required
+def vault_delete(nid):
+    if is_duress_session():
+        return redirect(url_for("duress_home"))
+    n = db.session.get(VaultNote, nid) or abort(404)
+    if n.created_by != current_user.username and current_user.role != ROLE_TOP:
+        abort(403)
+    cid = n.case_id
+    db.session.delete(n)
+    db.session.commit()
+    audit("vault_note_delete", f"note #{nid}", actor=current_user.username)
+    if cid:
+        custody(cid, "EDIT", f"Vault note deleted: #{nid}")
+    flash("Vault note destroyed.", "success")
+    return redirect(url_for("vault_home"))
+
+
+@app.route("/vault/<int:nid>/view", methods=["GET"])
+@login_required
+def vault_view(nid):
+    if is_duress_session():
+        abort(404)
+    n = db.session.get(VaultNote, nid) or abort(404)
+    if n.created_by != current_user.username and current_user.role not in (ROLE_TOP, ROLE_ANALYST):
+        abort(403)
+    return jsonify({
+        "id": n.id,
+        "title_enc": n.title_enc,
+        "body_enc": n.body_enc,
+        "label": n.label,
+        "created_at": n.created_at.isoformat(),
+        "created_by": n.created_by,
+        "case_id": n.case_id,
+    })
 
 
 # ============================================================

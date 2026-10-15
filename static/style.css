@@ -558,3 +558,43 @@ a.is-spinning-link .btn-spinner {
   font-size: 13px;
   white-space: pre-wrap;
 }
+
+/* ============================================================
+   Zero-Knowledge Vault
+   ============================================================ */
+#decryptedCard pre {
+  background: #000;
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 4px;
+  max-height: 400px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#vaultMsg {
+  min-height: 20px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+#vaultMsg:not(:empty) {
+  color: var(--amber);
+}
+
+#vault-create-card input,
+#vault-create-card textarea,
+#vault-create-card select {
+  margin-bottom: 8px;
+}
+
+#openForm input[type="number"] {
+  max-width: 140px;
+  display: inline-block;
+  margin-left: 8px;
+  margin-bottom: 0;
+}
