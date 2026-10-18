@@ -3,28 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>{% block title %}MIS{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20">
-{% block head %}{% endblock %}
-<meta name="application-name" content="MIS">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="MIS">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0a08">
-
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>{% block title %}MIS{% endblock %}</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="application-name" content="MIS">
-<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="MIS">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0a08">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png">
-<link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png">
-
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=23">
+{% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
 
@@ -36,8 +28,7 @@
 
 <div class="classified-banner">◆ CLASSIFIED // MIS OPERATIONAL // EYES ONLY ◆</div>
 <header class="topbar">
-  <div class="brand">
-    <a href="{{ url_for('dashboard') }}">MIS</a>
+  <div class="brand"><a href="{{ url_for('dashboard') }}">MIS</a>
     <span class="dim">◈</span>
     <span class="agent-name">{{ current_user.codename or current_user.username|upper }}</span>
   </div>
@@ -71,6 +62,7 @@
 
       {% if not is_duress %}
         <a href="{{ url_for('change_password') }}" class="menu-link">🔑 Change Password</a>
+        <a href="{{ url_for('setup_duress') }}" class="menu-link">🛡 Duress Mode</a>
         <a href="{{ url_for('vault_home') }}" class="menu-link">🔐 Zero-Knowledge Vault</a>
         <a href="{{ url_for('my_sessions') }}" class="menu-link">🖥 My Sessions</a>
         <a href="{{ url_for('integrity') }}" class="menu-link">✓ Integrity</a>
@@ -148,14 +140,16 @@
       }
     });
   }
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function (regs) {
-      regs.forEach(function (r) { r.unregister(); });
-    });
-    navigator.serviceWorker.register('/service-worker.js?v=20').catch(function () {});
+})();
+</script>
+<script>
+// Remember the last URL so we can resume after offline
+(function(){
+  if (location.pathname !== '/offline') {
+    try { sessionStorage.setItem('mis_last_url', location.pathname + location.search); } catch(e){}
   }
 })();
 </script>
-<script src="{{ url_for('static', filename='pwa-install.js') }}?v=20"></script>
+<script src="/static/pwa-install.js?v=23"></script>
 </body>
 </html>
