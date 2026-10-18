@@ -1,6 +1,5 @@
 /* ============================================================
-   MIS v20 — Full Stylesheet
-   MI6/CIA aesthetic · Mobile-first · All Features Included
+   MIS v21 — Full Stylesheet
    ============================================================ */
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -89,7 +88,7 @@ code { background: #000; padding: 2px 6px; border-radius: 2px; font-size: 11px;
 }
 .menu-btn:hover { background: var(--amber-glow); }
 
-/* ---------- Dropdown (Scrollable Fix) ---------- */
+/* ---------- Dropdown (Scrollable Fix Applied) ---------- */
 .menu-dropdown {
   display: none;
   position: absolute; right: 0; top: 44px;
@@ -97,14 +96,15 @@ code { background: #000; padding: 2px 6px; border-radius: 2px; font-size: 11px;
   border: 1px solid var(--amber-dim);
   min-width: 240px;
   border-radius: 6px;
-  overflow: hidden;
   box-shadow: 0 8px 32px -8px #000, 0 0 0 1px var(--amber-glow);
   z-index: 200;
   
-  /* Scroll fix */
+  /* Height and Scroll Fix */
   max-height: calc(100vh - 80px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  
+  /* Custom Scrollbar */
   scrollbar-width: thin;
   scrollbar-color: var(--amber-dim) transparent;
 }
