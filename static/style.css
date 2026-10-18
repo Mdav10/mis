@@ -88,31 +88,38 @@ code { background: #000; padding: 2px 6px; border-radius: 2px; font-size: 11px;
 }
 .menu-btn:hover { background: var(--amber-glow); }
 
-/* ---------- Dropdown (Strict Scroll Fix) ---------- */
+/* ---------- Dropdown (Guaranteed Scroll) ---------- */
 .menu-dropdown {
   display: none;
-  position: fixed; /* Changed from absolute to fixed to break out of topbar stacking */
-  right: 14px;
-  top: 90px; /* Pushed down below topbar */
+  position: absolute; 
+  right: 0; 
+  top: 44px;
   background: var(--panel);
   border: 1px solid var(--amber-dim);
   min-width: 240px;
   border-radius: 6px;
   box-shadow: 0 8px 32px -8px #000, 0 0 0 1px var(--amber-glow);
-  z-index: 1000;
+  z-index: 999;
   
-  /* Strict Scroll Constraints */
-  max-height: 60vh; /* Only 60% of screen height so we never hit the bottom */
-  overflow-y: auto;
-  overscroll-behavior: contain; /* CRITICAL: stops the page behind from scrolling */
+  /* HEIGHT & SCROLL FIX */
+  max-height: 350px !important; /* Hard limit: shorter than any phone screen */
+  overflow-y: scroll !important; /* Forces native scrollbar always on */
   -webkit-overflow-scrolling: touch;
   
-  scrollbar-width: thin;
-  scrollbar-color: var(--amber-dim) transparent;
+  /* Prevent page from scrolling behind */
+  overscroll-behavior-y: contain;
 }
-.menu-dropdown::-webkit-scrollbar { width: 6px; }
-.menu-dropdown::-webkit-scrollbar-track { background: transparent; }
-.menu-dropdown::-webkit-scrollbar-thumb { background-color: var(--amber-dim); border-radius: 10px; }
+
+.menu-dropdown::-webkit-scrollbar {
+  width: 8px; /* Make scrollbar thick so it's obvious */
+}
+.menu-dropdown::-webkit-scrollbar-track {
+  background: #000;
+}
+.menu-dropdown::-webkit-scrollbar-thumb {
+  background-color: var(--amber);
+  border-radius: 4px;
+}
 
 .menu-dropdown.open { display: block; }
 .menu-header { padding: 12px 14px; border-bottom: 1px solid var(--border); }
