@@ -1,6 +1,6 @@
 /* ============================================================
-   MIS v10 — Full Stylesheet
-   MI6/CIA aesthetic · Mobile-first · Button spinner included
+   MIS v20 — Full Stylesheet
+   MI6/CIA aesthetic · Mobile-first · All Features Included
    ============================================================ */
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -88,6 +88,8 @@ code { background: #000; padding: 2px 6px; border-radius: 2px; font-size: 11px;
   border-radius: 4px; cursor: pointer;
 }
 .menu-btn:hover { background: var(--amber-glow); }
+
+/* ---------- Dropdown (Scrollable Fix) ---------- */
 .menu-dropdown {
   display: none;
   position: absolute; right: 0; top: 44px;
@@ -98,7 +100,18 @@ code { background: #000; padding: 2px 6px; border-radius: 2px; font-size: 11px;
   overflow: hidden;
   box-shadow: 0 8px 32px -8px #000, 0 0 0 1px var(--amber-glow);
   z-index: 200;
+  
+  /* Scroll fix */
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--amber-dim) transparent;
 }
+.menu-dropdown::-webkit-scrollbar { width: 6px; }
+.menu-dropdown::-webkit-scrollbar-track { background: transparent; }
+.menu-dropdown::-webkit-scrollbar-thumb { background-color: var(--amber-dim); border-radius: 10px; }
+
 .menu-dropdown.open { display: block; }
 .menu-header { padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .menu-header b { color: var(--amber); display: block; letter-spacing: 1px; }
@@ -109,14 +122,6 @@ code { background: #000; padding: 2px 6px; border-radius: 2px; font-size: 11px;
 .menu-dropdown a:last-child { border-bottom: none; }
 .menu-dropdown a:hover { background: var(--panel-2); color: var(--amber); text-decoration: none; }
 .menu-dropdown a.logout-link { color: var(--red); }
-.menu-dropdown a.menu-link.is-spinning-link {
-  display: flex; align-items: center; justify-content: center;
-  min-height: 44px;
-}
-.menu-dropdown a.menu-link.is-spinning-link .btn-spinner {
-  border-color: var(--amber);
-  border-top-color: transparent;
-}
 
 /* ---------- Bottom nav ---------- */
 .mobilenav {
@@ -234,7 +239,7 @@ h2 {
 
 /* ---------- Inputs ---------- */
 input[type="text"], input[type="password"], input[type="datetime-local"],
-input[type="search"], textarea, select {
+input[type="search"], input[type="number"], textarea, select {
   width: 100%; padding: 11px 12px;
   background: #000; border: 1px solid var(--border);
   border-radius: 4px; color: var(--text);
@@ -325,23 +330,77 @@ button:active { transform: scale(0.98); }
 .people-list { list-style: none; padding: 0; margin: 0; }
 .people-list li.person-card {
   padding: 12px 0; border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 .people-list li.person-card:last-child { border-bottom: none; }
 .person-head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  width: 100%;
+  margin-bottom: 6px;
 }
 .person-name {
   color: var(--amber); font-size: 15px; letter-spacing: 1px;
   text-shadow: 0 0 8px var(--amber-glow);
 }
+.person-field {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: var(--text);
+  width: 100%;
+}
+.field-label {
+  color: var(--amber-dim);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-size: 11px;
+  min-width: 130px;
+}
 .person-note {
-  margin-top: 6px; color: var(--text);
+  margin-top: 8px;
+  padding-left: 12px;
   border-left: 2px solid var(--amber-dim);
-  padding-left: 10px; font-style: italic;
-  white-space: pre-wrap; word-wrap: break-word;
+  color: var(--text);
+  font-style: italic;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13.5px;
+  width: 100%;
 }
 .person-actions {
   margin-top: 8px; display: flex; gap: 12px;
+  width: 100%;
+}
+.case-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+.case-tag {
+  display: inline-block;
+  padding: 6px 10px;
+  background: #000;
+  border: 1px solid var(--amber-dim);
+  border-radius: 3px;
+  color: var(--amber);
+  text-decoration: none;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+.case-tag:hover { background: var(--amber-glow); text-decoration: none; }
+.case-note {
+  margin: 2px 0 6px 0;
+  font-style: italic;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  border-left: 2px solid var(--amber-dim);
+  padding-left: 8px;
 }
 
 /* ---------- Badges ---------- */
@@ -365,7 +424,7 @@ button:active { transform: scale(0.98); }
 .flash.success { border-color: var(--green); color: var(--green); }
 .flash.error { border-color: var(--red); color: var(--red); }
 
-/* ---------- Login ---------- */
+/* ---------- Login & Boot Sequence ---------- */
 .login-wrap {
   display: flex; justify-content: center; align-items: center;
   min-height: 100vh; min-height: 100svh;
@@ -405,13 +464,40 @@ button:active { transform: scale(0.98); }
 }
 @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.4; } }
 .login-card .primary { width: 100%; }
+
 .boot-screen {
-  margin-top: 16px; text-align: left;
-  font-size: 11px; color: var(--amber);
-  letter-spacing: 1px; line-height: 1.6;
-  white-space: pre; min-height: 90px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  background: #000;
+  border: 1px solid var(--amber-dim);
+  border-radius: 6px;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--amber);
+  white-space: pre-wrap;
+  letter-spacing: 1px;
+  min-height: 120px;
   text-shadow: 0 0 8px var(--amber-glow);
+  animation: bootFlicker 2.5s infinite;
 }
+@keyframes bootFlicker {
+  0%, 100% { opacity: 1; }
+  48% { opacity: 1; }
+  49% { opacity: 0.7; }
+  50% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.85; }
+  94% { opacity: 1; }
+}
+.boot-screen::after {
+  content: "█";
+  animation: cursorBlink 0.7s step-start infinite;
+  margin-left: 2px;
+}
+@keyframes cursorBlink { 50% { opacity: 0; } }
+.primary[disabled], button[disabled] { opacity: 0.75; cursor: wait; }
 
 /* ---------- Misc ---------- */
 .tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -424,45 +510,7 @@ button:active { transform: scale(0.98); }
   letter-spacing: 2px; font-size: 12px;
 }
 
-/* ---------- Command palette ---------- */
-.cmd-palette {
-  position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
-  width: 90%; max-width: 500px;
-  background: var(--panel);
-  border: 1px solid var(--amber-dim);
-  border-radius: 4px;
-  z-index: 200;
-  box-shadow: 0 20px 60px -20px #000;
-}
-.cmd-palette input {
-  width: 100%; border: none; border-bottom: 1px solid var(--border);
-  padding: 14px; font-size: 15px; background: transparent;
-  color: var(--text); border-radius: 0; margin: 0;
-}
-.cmd-palette input:focus { box-shadow: none; border-color: var(--amber); }
-.cmd-palette ul { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
-.cmd-palette li {
-  padding: 10px 14px; cursor: pointer; font-size: 14px;
-  border-bottom: 1px solid var(--border);
-}
-.cmd-palette li:last-child { border-bottom: none; }
-.cmd-palette li:hover { background: var(--panel-2); color: var(--amber); }
-
-/* ---------- Scanline overlay ---------- */
-body.logged-in::after {
-  content: ""; position: fixed; inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(0deg,
-    transparent 0, transparent 3px, #00000030 3px, #00000030 4px);
-  z-index: 999;
-  opacity: 0.4;
-  mix-blend-mode: overlay;
-}
-
-/* ============================================================
-   Button Loading Circle — appears on the button itself
-   ============================================================ */
-
+/* ---------- Button Loading Circle ---------- */
 .btn-spinner {
   display: inline-block;
   width: 16px;
@@ -473,128 +521,36 @@ body.logged-in::after {
   animation: misSpin 0.7s linear infinite;
   vertical-align: middle;
 }
-
-/* Primary filled button — dark spinner on amber fill */
-button.is-spinning,
-.primary.is-spinning {
-  color: #07080a;
-  background: var(--amber);
-  border-color: var(--amber);
-  opacity: 0.9;
-  cursor: wait;
-  pointer-events: none;
-  min-width: 48px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-left: 14px;
-  padding-right: 14px;
+button.is-spinning, .primary.is-spinning {
+  color: #07080a; background: var(--amber); border-color: var(--amber);
+  opacity: 0.9; cursor: wait; pointer-events: none; min-width: 48px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding-left: 14px; padding-right: 14px;
 }
-button.is-spinning .btn-spinner,
-.primary.is-spinning .btn-spinner {
-  border-color: #07080a;
-  border-top-color: transparent;
+button.is-spinning .btn-spinner, .primary.is-spinning .btn-spinner {
+  border-color: #07080a; border-top-color: transparent;
 }
-
-/* Danger buttons — dark spinner on red fill */
 .danger-btn.is-spinning {
-  background: var(--red);
-  color: #07080a;
-  border-color: var(--red);
+  background: var(--red); color: #07080a; border-color: var(--red);
 }
 .danger-btn.is-spinning .btn-spinner {
-  border-color: #07080a;
-  border-top-color: transparent;
+  border-color: #07080a; border-top-color: transparent;
 }
-
-/* Links — spinner replaces label */
 a.is-spinning-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  opacity: 0.8;
+  display: inline-flex; align-items: center; justify-content: center;
+  pointer-events: none; opacity: 0.8;
 }
 a.is-spinning-link .btn-spinner {
-  border-color: var(--amber);
-  border-top-color: transparent;
+  border-color: var(--amber); border-top-color: transparent;
 }
+@keyframes misSpin { to { transform: rotate(360deg); } }
 
-@keyframes misSpin {
-  to { transform: rotate(360deg); }
-}
-
-
-
-
-
-
-/* Role banner */
-.role-banner {
-  padding: 8px 14px;
-  margin-bottom: 14px;
-  border-radius: 4px;
-  border-left: 3px solid var(--amber);
-  background: var(--panel);
-  font-size: 12px;
-  letter-spacing: 2px;
-}
-.role-banner b { color: var(--amber); }
-.role-banner.role-analyst { border-left-color: #3fb950; }
-.role-banner.role-analyst b { color: #3fb950; }
-.role-banner.role-agent { border-left-color: #58a6ff; }
-.role-banner.role-agent b { color: #58a6ff; }
-
-/* Wave 2 — voice transcript */
-.voice-transcript {
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: #000;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--amber);
-  border-radius: 4px;
-  font-style: italic;
-  color: var(--text);
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-
-/* ============================================================
-   Zero-Knowledge Vault
-   ============================================================ */
-#decryptedCard pre {
-  background: #000;
-  border: 1px solid var(--border);
-  padding: 12px;
-  border-radius: 4px;
-  max-height: 400px;
-  overflow: auto;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-#vaultMsg {
-  min-height: 20px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-}
-#vaultMsg:not(:empty) {
-  color: var(--amber);
-}
-
-#vault-create-card input,
-#vault-create-card textarea,
-#vault-create-card select {
-  margin-bottom: 8px;
-}
-
-#openForm input[type="number"] {
-  max-width: 140px;
-  display: inline-block;
-  margin-left: 8px;
-  margin-bottom: 0;
+/* ---------- Scanline overlay ---------- */
+body.logged-in::after {
+  content: ""; position: fixed; inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0, transparent 3px, #00000030 3px, #00000030 4px);
+  z-index: 999;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
 }
