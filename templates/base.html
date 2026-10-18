@@ -15,7 +15,7 @@
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=23">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=24">
 {% block head %}{% endblock %}
 </head>
 <body class="{% if current_user.is_authenticated %}logged-in{% endif %}">
@@ -51,7 +51,7 @@
   </nav>
   {% endif %}
 
-  <div class="user-menu">
+  <div class="user-menu dropdown-wrap">
     <button type="button" class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
     <div class="menu-dropdown" id="userMenu">
       <div class="menu-header">
